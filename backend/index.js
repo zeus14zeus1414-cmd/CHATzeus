@@ -60,7 +60,7 @@ app.options('*', cors({
 const oauth2Client = new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    "https://chatzeus-production.up.railway.app/auth/google/callback"
+    "https://chatzeusb.vercel.app/auth/google/callback"
   );
 
 app.use(express.json({ limit: '50mb' }));
@@ -1216,7 +1216,5 @@ mongoose.connect(process.env.MONGODB_URI)
 // =================================================================
 // 7. تشغيل الخادم
 // =================================================================
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Zeus Pro Server (Manual Env) is now running on http://0.0.0.0:${PORT}` );
-});
+// ✅ أضف هذا السطر في نهاية الملف
+module.exports = app;
