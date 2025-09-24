@@ -627,6 +627,8 @@ app.delete('/api/chats/:chatId', verifyToken, async (req, res) => {
 // =================================================================
 app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
     try {
+        console.log('🔍 Dashboard stats request received');
+        
         // ✨ جلب إجمالي المستخدمين
         const totalUsers = await User.countDocuments();
 
@@ -640,13 +642,18 @@ app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
         ]);
         const totalMessages = totalMessagesResult.length > 0 ? totalMessagesResult[0].total : 0;
 
-        // ✨ جلب إجمالي الملفات المرفوعة
-       const totalUploadsResult = await Chat.aggregate([
-            { $match: { 'messages.fileUrl': { $exists: true, $ne: null } } },
+        // ✨ جلب إجمالي الملفات المرفوعة (تحديث الاستعلام)
+        const totalUploadsResult = await Chat.aggregate([
             { $unwind: '$messages' },
-            { $match: { 'messages.fileUrl': { $exists: true, $ne: null } } },
+            { $match: { 
+                $or: [
+                    { 'messages.attachments': { $exists: true, $not: { $size: 0 } } },
+                    { 'messages.fileUrl': { $exists: true, $ne: null } }
+                ]
+            }},
             { $count: 'total' }
-        ]);        const totalUploads = totalUploadsResult.length > 0 ? totalUploadsResult[0].total : 0;
+        ]);
+        const totalUploads = totalUploadsResult.length > 0 ? totalUploadsResult[0].total : 0;
 
         // ✨ إحصائيات المستخدمين الجدد (آخر 30 يوم)
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -657,14 +664,16 @@ app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
                     _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
                     count: { $sum: 1 }
                 }
-            },            { $sort: { _id: 1 } }
+            },
+            { $sort: { _id: 1 } }
         ]);
-       const usersByDate = {
-          labels: newUsersByDate.map(item => item._id),
-           data: newUsersByDate.map(item => item.count)
+        
+        const usersByDate = {
+            labels: newUsersByDate.map(item => item._id),
+            data: newUsersByDate.map(item => item.count)
         };
 
-        // ✨ إحصائيات المحادثات حسب المزود (Google, OpenRouter, إلخ)
+        // ✨ إحصائيات المحادثات حسب المزود
         const chatsByProviderResult = await Chat.aggregate([
             { $group: { _id: '$provider', count: { $sum: 1 } } }
         ]);
@@ -673,20 +682,26 @@ app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
             data: chatsByProviderResult.map(item => item.count)
         };
         
-        res.status(200).json({
+        const responseData = {
             totalUsers,
             totalChats,
             totalMessages,
             totalUploads,
             usersByDate,
             chatsByProvider
+        };
+        
+        console.log('✅ Dashboard stats response:', responseData);
+        res.status(200).json(responseData);
+        
+    } catch (error) {
+        console.error('❌ Error fetching dashboard stats:', error);
+        res.status(500).json({ 
+            message: 'Failed to fetch dashboard statistics', 
+            error: error.message 
         });
-   } catch (error) {
-        console.error('Error fetching dashboard stats:', error);
-        res.status(500).json({ message: 'Failed to fetch dashboard statistics', error: error.message });
     }
 });
-
 
 
 // =================================================================
