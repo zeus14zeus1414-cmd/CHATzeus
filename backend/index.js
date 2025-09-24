@@ -37,20 +37,7 @@ const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
 
-// ✨✨✨ دالة وسيطة للتحقق من التوكن الثابت (للاختبار) ✨✨✨
-// ⚠️⚠️⚠️ تنبيه: هذا توكن ثابت للاختبار فقط. غير آمن للاستخدام في الإنتاج.
-function verifyToken(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // استخراج التوكن من 'Bearer TOKEN'
-    
-    // هذا التوكن يجب أن يكون هو نفسه الذي وضعته في ملف script.js
-    const HARDCODED_TOKEN = 'eyJpZCI6IjY4ZDMyNWYxMDBlNDQzMjQ1ZmUwOWU4ZCIsImdvb2dsZUlkIjoiMTA1OTIzOTczMjEwNTE4ODM5NjU5IiwibmFtZSI6Iti52KjZiCDYr9mKJyIsImVtYWlsIjoiZmxhZi5hYm9vZGVnZ2dAZ21haWwuY29tIiwicGljdHVyZSI6Imh0dHBzOi8vbGgzLmdvb2dsZXVzZXJjb250ZW50LmNvbS9hL0FDZzhvY0ozUXFSYS1ZM0E1dFBDWGg0ZFhmZVpmNmdIUlJ0dW1qT0oxZ2pvTEhjMDR0VFFqUT1zOTYtYyIsImlhdCI6MTc1ODcyNzEyOSwiZXhwIjoxNzU5MzMxOTI5fQ.VnYebbJWY2ukAa9fpcFMLdEcdQsZd4TFks7i7s6MNWU'; 
 
-    if (!token || token !== HARDCODED_TOKEN) {
-        return res.status(401).json({ message: 'Unauthorized: Invalid Token' });
-    }
-    next();
-}
 
 // =================================================================
 // 3. إعداد تطبيق Express والخادم
@@ -91,16 +78,32 @@ cloudinary.config({
 console.log('✅ Cloudinary configured.');
 
 // =================================================================
-// 4. Middleware للتحقق من التوكن
+// 4. Middleware للتحقق من التوكن (يدعم كلا من JWT والتوكن الثابت للوحة التحكم)
 // =================================================================
 function verifyToken(req, res, next) {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // استخراج التوكن من 'Bearer TOKEN'
+    const token = authHeader && authHeader.split(' ')[1];
 
-    if (token == null) {
+    if (!token) {
         return res.status(401).json({ loggedIn: false, message: 'No token provided.' });
     }
 
+    // ✨ التوكن الثابت للوحة التحكم (للاختبار فقط) ✨
+    const DASHBOARD_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4ZDMyNWYxMDBlNDQzMjQ1ZmUwOWU4ZCIsImdvb2dsZUlkIjoiMTA1OTIzOTczMjEwNTE4ODM5NjU5IiwibmFtZSI6Iti52KjZiCDYr9mKJyIsImVtYWlsIjoiZmxhZi5hYm9vZGVnZ2dAZ21haWwuY29tIiwicGljdHVyZSI6Imh0dHBzOi8vbGgzLmdvb2dsZXVzZXJjb250ZW50LmNvbS9hL0FDZzhvY0ozUXFSYS1ZM0E1dFBDWGg0ZFhmZVpmNmdIUlJ0dW1qT0oxZ2pvTEhjMDR0VFFqUT1zOTYtYyIsImlhdCI6MTc1ODcyNzEyOSwiZXhwIjoxNzU5MzMxOTI5fQ.VnYebbJWY2ukAa9fpcFMLdEcdQsZd4TFks7i7s6MNWU';
+
+    // إذا كان التوكن يطابق توكن لوحة التحكم
+    if (token === DASHBOARD_TOKEN) {
+        // فك تشفير التوكن لاستخراج بيانات المستخدم
+        try {
+            const decoded = jwt.decode(token);
+            req.user = decoded;
+            return next();
+        } catch (error) {
+            return res.status(403).json({ loggedIn: false, message: 'Invalid dashboard token format.' });
+        }
+    }
+
+    // التحقق من JWT العادي
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) {
             return res.status(403).json({ loggedIn: false, message: 'Token is not valid.' });
