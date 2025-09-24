@@ -37,6 +37,21 @@ const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
 
+// ✨✨✨ دالة وسيطة للتحقق من التوكن الثابت (للاختبار) ✨✨✨
+// ⚠️⚠️⚠️ تنبيه: هذا توكن ثابت للاختبار فقط. غير آمن للاستخدام في الإنتاج.
+‏function verifyToken(req, res, next) {
+‏    const authHeader = req.headers['authorization'];
+‏    const token = authHeader && authHeader.split(' ')[1]; // استخراج التوكن من 'Bearer TOKEN'
+    
+    // هذا التوكن يجب أن يكون هو نفسه الذي وضعته في ملف script.js
+‏    const HARDCODED_TOKEN = 'your_super_secret_temporary_token_here'; 
+
+‏    if (!token || token !== HARDCODED_TOKEN) {
+‏        return res.status(401).json({ message: 'Unauthorized: Invalid Token' });
+    }
+‏    next();
+}
+
 // =================================================================
 // 3. إعداد تطبيق Express والخادم
 // =================================================================
@@ -600,6 +615,74 @@ app.delete('/api/chats/:chatId', verifyToken, async (req, res) => {
     } catch (error) {
         console.error('Error deleting chat:', error);
         res.status(500).json({ message: 'Failed to delete chat' });
+    }
+});
+
+
+// =================================================================
+// ✨ 6. مسارات لوحة التحكم (Dashboard Routes) ✨
+// =================================================================
+‏app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
+‏    try {
+        // ✨ جلب إجمالي المستخدمين
+‏        const totalUsers = await User.countDocuments();
+
+        // ✨ جلب إجمالي المحادثات
+‏        const totalChats = await Chat.countDocuments();
+
+        // ✨ جلب إجمالي الرسائل
+‏        const totalMessagesResult = await Chat.aggregate([
+‏            { $unwind: '$messages' },
+‏            { $count: 'total' }
+        ]);
+‏        const totalMessages = totalMessagesResult.length > 0 ? totalMessagesResult[0].total : 0;
+
+        // ✨ جلب إجمالي الملفات المرفوعة
+‏        const totalUploadsResult = await Chat.aggregate([
+‏            { $match: { 'messages.fileUrl': { $exists: true, $ne: null } } },
+‏            { $unwind: '$messages' },
+‏            { $match: { 'messages.fileUrl': { $exists: true, $ne: null } } },
+‏            { $count: 'total' }
+        ]);
+‏        const totalUploads = totalUploadsResult.length > 0 ? totalUploadsResult[0].total : 0;
+
+        // ✨ إحصائيات المستخدمين الجدد (آخر 30 يوم)
+‏        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+‏        const newUsersByDate = await User.aggregate([
+‏            { $match: { createdAt: { $gte: thirtyDaysAgo } } },
+            {
+‏                $group: {
+‏                    _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+‏                    count: { $sum: 1 }
+                }
+            },
+‏            { $sort: { _id: 1 } }
+        ]);
+‏        const usersByDate = {
+‏            labels: newUsersByDate.map(item => item._id),
+‏            data: newUsersByDate.map(item => item.count)
+        };
+
+        // ✨ إحصائيات المحادثات حسب المزود (Google, OpenRouter, إلخ)
+‏        const chatsByProviderResult = await Chat.aggregate([
+‏            { $group: { _id: '$provider', count: { $sum: 1 } } }
+        ]);
+‏        const chatsByProvider = {
+‏            labels: chatsByProviderResult.map(item => item._id || 'غير معروف'),
+‏            data: chatsByProviderResult.map(item => item.count)
+        };
+        
+‏        res.status(200).json({
+‏            totalUsers,
+‏            totalChats,
+‏            totalMessages,
+‏            totalUploads,
+‏            usersByDate,
+‏            chatsByProvider
+        });
+‏    } catch (error) {
+‏        console.error('Error fetching dashboard stats:', error);
+‏        res.status(500).json({ message: 'Failed to fetch dashboard statistics', error: error.message });
     }
 });
 
