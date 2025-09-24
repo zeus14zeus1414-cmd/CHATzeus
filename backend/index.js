@@ -39,17 +39,17 @@ const cloudinary = require('cloudinary').v2;
 
 // ✨✨✨ دالة وسيطة للتحقق من التوكن الثابت (للاختبار) ✨✨✨
 // ⚠️⚠️⚠️ تنبيه: هذا توكن ثابت للاختبار فقط. غير آمن للاستخدام في الإنتاج.
-‏function verifyToken(req, res, next) {
-‏    const authHeader = req.headers['authorization'];
-‏    const token = authHeader && authHeader.split(' ')[1]; // استخراج التوكن من 'Bearer TOKEN'
+function verifyToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // استخراج التوكن من 'Bearer TOKEN'
     
     // هذا التوكن يجب أن يكون هو نفسه الذي وضعته في ملف script.js
-‏    const HARDCODED_TOKEN = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.'eyJpZCI6IjY4ZDMyNWYxMDBlNDQzMjQ1ZmUwOWU4ZCIsImdvb2dsZUlkIjoiMTA1OTIzOTczMjEwNTE4ODM5NjU5IiwibmFtZSI6Iti52KjZiCDYr9mKJyIsImVtYWlsIjoiZmxhZi5hYm9vZGVnZ2dAZ21haWwuY29tIiwicGljdHVyZSI6Imh0dHBzOi8vbGgzLmdvb2dsZXVzZXJjb250ZW50LmNvbS9hL0FDZzhvY0ozUXFSYS1ZM0E1dFBDWGg0ZFhmZVpmNmdIUlJ0dW1qT0oxZ2pvTEhjMDR0VFFqUT1zOTYtYyIsImlhdCI6MTc1ODcyNzEyOSwiZXhwIjoxNzU5MzMxOTI5fQ.VnYebbJWY2ukAa9fpcFMLdEcdQsZd4TFks7i7s6MNWU'; 
+    const HARDCODED_TOKEN = 'eyJpZCI6IjY4ZDMyNWYxMDBlNDQzMjQ1ZmUwOWU4ZCIsImdvb2dsZUlkIjoiMTA1OTIzOTczMjEwNTE4ODM5NjU5IiwibmFtZSI6Iti52KjZiCDYr9mKJyIsImVtYWlsIjoiZmxhZi5hYm9vZGVnZ2dAZ21haWwuY29tIiwicGljdHVyZSI6Imh0dHBzOi8vbGgzLmdvb2dsZXVzZXJjb250ZW50LmNvbS9hL0FDZzhvY0ozUXFSYS1ZM0E1dFBDWGg0ZFhmZVpmNmdIUlJ0dW1qT0oxZ2pvTEhjMDR0VFFqUT1zOTYtYyIsImlhdCI6MTc1ODcyNzEyOSwiZXhwIjoxNzU5MzMxOTI5fQ.VnYebbJWY2ukAa9fpcFMLdEcdQsZd4TFks7i7s6MNWU'; 
 
-‏    if (!token || token !== HARDCODED_TOKEN) {
-‏        return res.status(401).json({ message: 'Unauthorized: Invalid Token' });
+    if (!token || token !== HARDCODED_TOKEN) {
+        return res.status(401).json({ message: 'Unauthorized: Invalid Token' });
     }
-‏    next();
+    next();
 }
 
 // =================================================================
@@ -622,67 +622,65 @@ app.delete('/api/chats/:chatId', verifyToken, async (req, res) => {
 // =================================================================
 // ✨ 6. مسارات لوحة التحكم (Dashboard Routes) ✨
 // =================================================================
-‏app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
-‏    try {
+app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
+    try {
         // ✨ جلب إجمالي المستخدمين
-‏        const totalUsers = await User.countDocuments();
+        const totalUsers = await User.countDocuments();
 
         // ✨ جلب إجمالي المحادثات
-‏        const totalChats = await Chat.countDocuments();
+        const totalChats = await Chat.countDocuments();
 
         // ✨ جلب إجمالي الرسائل
-‏        const totalMessagesResult = await Chat.aggregate([
-‏            { $unwind: '$messages' },
-‏            { $count: 'total' }
+        const totalMessagesResult = await Chat.aggregate([
+            { $unwind: '$messages' },
+            { $count: 'total' }
         ]);
-‏        const totalMessages = totalMessagesResult.length > 0 ? totalMessagesResult[0].total : 0;
+        const totalMessages = totalMessagesResult.length > 0 ? totalMessagesResult[0].total : 0;
 
         // ✨ جلب إجمالي الملفات المرفوعة
-‏        const totalUploadsResult = await Chat.aggregate([
-‏            { $match: { 'messages.fileUrl': { $exists: true, $ne: null } } },
-‏            { $unwind: '$messages' },
-‏            { $match: { 'messages.fileUrl': { $exists: true, $ne: null } } },
-‏            { $count: 'total' }
-        ]);
-‏        const totalUploads = totalUploadsResult.length > 0 ? totalUploadsResult[0].total : 0;
+       const totalUploadsResult = await Chat.aggregate([
+            { $match: { 'messages.fileUrl': { $exists: true, $ne: null } } },
+            { $unwind: '$messages' },
+            { $match: { 'messages.fileUrl': { $exists: true, $ne: null } } },
+            { $count: 'total' }
+        ]);        const totalUploads = totalUploadsResult.length > 0 ? totalUploadsResult[0].total : 0;
 
         // ✨ إحصائيات المستخدمين الجدد (آخر 30 يوم)
-‏        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-‏        const newUsersByDate = await User.aggregate([
-‏            { $match: { createdAt: { $gte: thirtyDaysAgo } } },
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const newUsersByDate = await User.aggregate([
+            { $match: { createdAt: { $gte: thirtyDaysAgo } } },
             {
-‏                $group: {
-‏                    _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-‏                    count: { $sum: 1 }
+                $group: {
+                    _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+                    count: { $sum: 1 }
                 }
-            },
-‏            { $sort: { _id: 1 } }
+            },            { $sort: { _id: 1 } }
         ]);
-‏        const usersByDate = {
-‏            labels: newUsersByDate.map(item => item._id),
-‏            data: newUsersByDate.map(item => item.count)
+       const usersByDate = {
+          labels: newUsersByDate.map(item => item._id),
+           data: newUsersByDate.map(item => item.count)
         };
 
         // ✨ إحصائيات المحادثات حسب المزود (Google, OpenRouter, إلخ)
-‏        const chatsByProviderResult = await Chat.aggregate([
-‏            { $group: { _id: '$provider', count: { $sum: 1 } } }
+        const chatsByProviderResult = await Chat.aggregate([
+            { $group: { _id: '$provider', count: { $sum: 1 } } }
         ]);
-‏        const chatsByProvider = {
-‏            labels: chatsByProviderResult.map(item => item._id || 'غير معروف'),
-‏            data: chatsByProviderResult.map(item => item.count)
+        const chatsByProvider = {
+            labels: chatsByProviderResult.map(item => item._id || 'غير معروف'),
+            data: chatsByProviderResult.map(item => item.count)
         };
         
-‏        res.status(200).json({
-‏            totalUsers,
-‏            totalChats,
-‏            totalMessages,
-‏            totalUploads,
-‏            usersByDate,
-‏            chatsByProvider
+        res.status(200).json({
+            totalUsers,
+            totalChats,
+            totalMessages,
+            totalUploads,
+            usersByDate,
+            chatsByProvider
         });
-‏    } catch (error) {
-‏        console.error('Error fetching dashboard stats:', error);
-‏        res.status(500).json({ message: 'Failed to fetch dashboard statistics', error: error.message });
+   } catch (error) {
+        console.error('Error fetching dashboard stats:', error);
+        res.status(500).json({ message: 'Failed to fetch dashboard statistics', error: error.message });
     }
 });
 
