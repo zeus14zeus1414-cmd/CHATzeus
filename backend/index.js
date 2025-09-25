@@ -168,6 +168,208 @@ const upload = multer({
 // =================================================================
 // 5. نقاط النهاية (Routes)
 // =================================================================
+
+// =================================================================
+// ✨ نقاط نهاية إدارة المستخدمين ✨
+// =================================================================
+// جلب جميع المستخدمين مع إحصائياتهم
+app.get('/api/users', verifyToken, async (req, res) => {
+    try {
+        console.log('🔍 جلب المستخدمين...');
+        
+        // جلب جميع المستخدمين
+        const users = await User.find({}).sort({ createdAt: -1 }).lean();
+        
+        // حساب إحصائيات كل مستخدم
+        const usersWithStats = await Promise.all(users.map(async (user) => {
+            const chats = await Chat.find({ user: user._id }).lean();
+            const totalMessages = chats.reduce((sum, chat) => sum + (chat.messages?.length || 0), 0);
+            
+            // تحديد آخر نشاط
+            const lastActivity = chats.length > 0 
+                ? Math.max(...chats.map(chat => new Date(chat.updatedAt || chat.createdAt).getTime()))
+                : new Date(user.createdAt).getTime();
+            
+            return {
+                ...user,
+                chatCount: chats.length,
+                messageCount: totalMessages,
+                lastActivity: new Date(lastActivity).toISOString(),
+                isActive: (Date.now() - lastActivity) < (7 * 24 * 60 * 60 * 1000) // نشط إذا كان آخر نشاط خلال أسبوع
+            };
+        }));
+
+        // حساب الإحصائيات العامة
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        
+        const stats = {
+            total: users.length,
+            active: usersWithStats.filter(u => u.isActive).length,
+            newThisMonth: users.filter(u => new Date(u.createdAt) > thirtyDaysAgo).length,
+            avgChats: usersWithStats.length > 0 ? (usersWithStats.reduce((sum, u) => sum + u.chatCount, 0) / usersWithStats.length).toFixed(1) : '0'
+        };
+
+        res.json({
+            users: usersWithStats,
+            stats
+        });
+
+    } catch (error) {
+        console.error('خطأ في جلب المستخدمين:', error);
+        res.status(500).json({ message: 'فشل في جلب بيانات المستخدمين', error: error.message });
+    }
+});
+
+// جلب مستخدم محدد مع تفاصيله الكاملة
+app.get('/api/users/:userId', verifyToken, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ message: 'معرف المستخدم غير صحيح' });
+        }
+
+        const user = await User.findById(userId).lean();
+        if (!user) {
+            return res.status(404).json({ message: 'المستخدم غير موجود' });
+        }
+
+        // جلب محادثات المستخدم
+        const chats = await Chat.find({ user: userId })
+            .sort({ updatedAt: -1 })
+            .limit(10)
+            .select('title createdAt updatedAt messages.length')
+            .lean();
+
+        const totalMessages = await Chat.aggregate([
+            { $match: { user: new mongoose.Types.ObjectId(userId) } },
+            { $unwind: '$messages' },
+            { $count: 'total' }
+        ]);
+
+        const userWithDetails = {
+            ...user,
+            chatCount: chats.length,
+            messageCount: totalMessages.length > 0 ? totalMessages[0].total : 0,
+            chats: chats.map(chat => ({
+                ...chat,
+                messages: { length: chat.messages?.length || 0 }
+            }))
+        };
+
+        res.json(userWithDetails);
+
+    } catch (error) {
+        console.error('خطأ في جلب تفاصيل المستخدم:', error);
+        res.status(500).json({ message: 'فشل في جلب تفاصيل المستخدم', error: error.message });
+    }
+});
+
+// حذف مستخدم
+app.delete('/api/users/:userId', verifyToken, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ message: 'معرف المستخدم غير صحيح' });
+        }
+
+        // حذف جميع محادثات المستخدم أولاً
+        await Chat.deleteMany({ user: userId });
+        
+        // حذف إعدادات المستخدم
+        await Settings.deleteOne({ user: userId });
+        
+        // حذف المستخدم نفسه
+        const deletedUser = await User.findByIdAndDelete(userId);
+        
+        if (!deletedUser) {
+            return res.status(404).json({ message: 'المستخدم غير موجود' });
+        }
+
+        res.json({ message: 'تم حذف المستخدم وجميع بياناته بنجاح' });
+
+    } catch (error) {
+        console.error('خطأ في حذف المستخدم:', error);
+        res.status(500).json({ message: 'فشل في حذف المستخدم', error: error.message });
+    }
+});
+
+// =================================================================
+// ✨ نقاط نهاية إدارة المحادثات ✨
+// =================================================================
+// جلب جميع المحادثات مع تفاصيلها
+app.get('/api/chats', verifyToken, async (req, res) => {
+    try {
+        console.log('🔍 جلب المحادثات...');
+        
+        // جلب المحادثات مع معلومات المستخدمين
+        const chats = await Chat.find({})
+            .sort({ updatedAt: -1 })
+            .populate('user', 'name email')
+            .lean();
+
+        // تنسيق البيانات للعرض
+        const formattedChats = chats.map(chat => ({
+            ...chat,
+            userName: chat.user?.name || 'مستخدم مجهول',
+            userEmail: chat.user?.email || 'غير محدد'
+        }));
+
+        // حساب الإحصائيات
+        const totalMessages = chats.reduce((sum, chat) => sum + (chat.messages?.length || 0), 0);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayChats = chats.filter(chat => new Date(chat.createdAt) >= today).length;
+        
+        const stats = {
+            totalChats: chats.length,
+            totalMessages,
+            todayChats,
+            avgMessages: chats.length > 0 ? (totalMessages / chats.length).toFixed(1) : '0'
+        };
+
+        res.json({
+            chats: formattedChats,
+            stats
+        });
+
+    } catch (error) {
+        console.error('خطأ في جلب المحادثات:', error);
+        res.status(500).json({ message: 'فشل في جلب بيانات المحادثات', error: error.message });
+    }
+});
+
+// جلب محادثة محددة مع جميع رسائلها
+app.get('/api/chats/:chatId', verifyToken, async (req, res) => {
+    try {
+        const { chatId } = req.params;
+        
+        if (!mongoose.Types.ObjectId.isValid(chatId)) {
+            return res.status(400).json({ message: 'معرف المحادثة غير صحيح' });
+        }
+
+        const chat = await Chat.findById(chatId)
+            .populate('user', 'name email picture')
+            .lean();
+
+        if (!chat) {
+            return res.status(404).json({ message: 'المحادثة غير موجودة' });
+        }
+
+        res.json({
+            ...chat,
+            userName: chat.user?.name || 'مستخدم مجهول',
+            userEmail: chat.user?.email || 'غير محدد'
+        });
+
+    } catch (error) {
+        console.error('خطأ في جلب تفاصيل المحادثة:', error);
+        res.status(500).json({ message: 'فشل في جلب تفاصيل المحادثة', error: error.message });
+    }
+});
+
 // =================================================================
 // مسار رفع الملفات (يرجع معلومات يمكن حفظها داخل الرسالة فقط)
 // =================================================================
@@ -638,9 +840,6 @@ app.delete('/api/chats/:chatId', verifyToken, async (req, res) => {
 });
 
 
-// =================================================================
-// ✨ 6. مسارات لوحة التحكم (Dashboard Routes) ✨
-// =================================================================
 app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
     try {
         console.log('🔍 Dashboard stats request received');
@@ -658,7 +857,7 @@ app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
         ]);
         const totalMessages = totalMessagesResult.length > 0 ? totalMessagesResult[0].total : 0;
 
-        // ✨ جلب إجمالي الملفات المرفوعة (تحديث الاستعلام)
+        // ✨ جلب إجمالي الملفات المرفوعة (محسن)
         const totalUploadsResult = await Chat.aggregate([
             { $unwind: '$messages' },
             { $match: { 
@@ -671,7 +870,7 @@ app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
         ]);
         const totalUploads = totalUploadsResult.length > 0 ? totalUploadsResult[0].total : 0;
 
-        // ✨ إحصائيات المستخدمين الجدد (آخر 30 يوم)
+        // ✨ إحصائيات المستخدمين الجدد (آخر 30 يوم) - محسنة
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
         const newUsersByDate = await User.aggregate([
             { $match: { createdAt: { $gte: thirtyDaysAgo } } },
@@ -684,30 +883,105 @@ app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
             { $sort: { _id: 1 } }
         ]);
         
+        // ملء الأيام المفقودة بصفر
+        const usersByDateMap = new Map(newUsersByDate.map(item => [item._id, item.count]));
+        const usersByDateLabels = [];
+        const usersByDateData = [];
+        
+        for (let i = 29; i >= 0; i--) {
+            const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+            const dateStr = date.toISOString().split('T')[0];
+            const label = date.toLocaleDateString('ar-SA', { month: 'short', day: 'numeric' });
+            
+            usersByDateLabels.push(label);
+            usersByDateData.push(usersByDateMap.get(dateStr) || 0);
+        }
+
         const usersByDate = {
-            labels: newUsersByDate.map(item => item._id),
-            data: newUsersByDate.map(item => item.count)
+            labels: usersByDateLabels,
+            data: usersByDateData
         };
 
-        // ✨ إحصائيات المحادثات حسب المزود
+        // ✨ إحصائيات المحادثات حسب المزود - محسنة
         const chatsByProviderResult = await Chat.aggregate([
-            { $group: { _id: '$provider', count: { $sum: 1 } } }
+            { $group: { _id: '$provider', count: { $sum: 1 } } },
+            { $sort: { count: -1 } }
         ]);
         const chatsByProvider = {
-            labels: chatsByProviderResult.map(item => item._id || 'غير معروف'),
+            labels: chatsByProviderResult.map(item => {
+                switch(item._id) {
+                    case 'gemini': return 'Gemini';
+                    case 'openrouter': return 'OpenRouter';
+                    case 'custom': return 'مخصص';
+                    default: return item._id || 'غير معروف';
+                }
+            }),
             data: chatsByProviderResult.map(item => item.count)
         };
-        
+
+        // ✨ إحصائيات إضافية للوحة المطورة
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const activeUsers = await User.countDocuments({
+            updatedAt: { $gte: sevenDaysAgo }
+        });
+
+        // إحصائيات النماذج المستخدمة
+        const modelUsageResult = await Chat.aggregate([
+            { $group: { _id: '$model', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 10 }
+        ]);
+
+        const modelUsage = {
+            labels: modelUsageResult.map(item => item._id || 'غير محدد'),
+            data: modelUsageResult.map(item => item.count)
+        };
+
+        // إحصائيات النشاط اليومي (آخر 7 أيام)
+        const activityStats = await Chat.aggregate([
+            { 
+                $match: { 
+                    createdAt: { $gte: sevenDaysAgo }
+                }
+            },
+            {
+                $group: {
+                    _id: { 
+                        $dateToString: { 
+                            format: '%Y-%m-%d', 
+                            date: '$createdAt' 
+                        }
+                    },
+                    chats: { $sum: 1 },
+                    messages: { $sum: { $size: '$messages' } }
+                }
+            },
+            { $sort: { _id: 1 } }
+        ]);
+
         const responseData = {
             totalUsers,
             totalChats,
             totalMessages,
             totalUploads,
+            activeUsers,
             usersByDate,
-            chatsByProvider
+            chatsByProvider,
+            modelUsage,
+            activityStats,
+            // إحصائيات نمو سريعة
+            growth: {
+                usersThisWeek: await User.countDocuments({ createdAt: { $gte: sevenDaysAgo } }),
+                chatsThisWeek: await Chat.countDocuments({ createdAt: { $gte: sevenDaysAgo } }),
+                messagesThisWeek: await Chat.aggregate([
+                    { $match: { createdAt: { $gte: sevenDaysAgo } } },
+                    { $unwind: '$messages' },
+                    { $count: 'total' }
+                ]).then(result => result.length > 0 ? result[0].total : 0)
+            }
         };
         
-        console.log('✅ Dashboard stats response:', responseData);
+        console.log('✅ Enhanced dashboard stats response');
         res.status(200).json(responseData);
         
     } catch (error) {
@@ -718,7 +992,6 @@ app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
         });
     }
 });
-
 
 // =================================================================
 // 6. دوال معالجة الدردشة (تبقى كما هي)
