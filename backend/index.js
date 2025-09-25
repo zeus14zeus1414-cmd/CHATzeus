@@ -43,27 +43,43 @@ const cloudinary = require('cloudinary').v2;
 // 3. إعداد تطبيق Express والخادم
 // =================================================================
 const app = express();
-const server = http.createServer(app );
+const server = http.createServer(app  );
 
-// ✨ إعدادات CORS النهائية والمحصّنة ✨
-app.use(cors({
-  origin: 'https://chatzeus.vercel.app', // السماح لواجهتك الأمامية فقط
+// ✨ قائمة النطاقات المسموح بها للاتصال بالخادم ✨
+const allowedOrigins = [
+    'https://chatzeus.vercel.app',    // 1. واجهة المستخدم الرئيسية
+    'https://dashporddd.vercel.app'   // 2. لوحة التحكم الجديدة
+    // يمكنك إضافة أي نطاقات أخرى هنا في المستقبل
+];
+
+// ✨ إعدادات CORS النهائية والمحصّنة (تستخدم القائمة أعلاه ) ✨
+const corsOptions = {
+  origin: function (origin, callback) {
+    // السماح بالطلبات إذا كان مصدرها (origin) ضمن القائمة المسموح بها
+    // أو إذا لم يكن هناك مصدر (مثل الطلبات من Postman أو أدوات التطوير)
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      // إذا كان المصدر غير موجود في القائمة، يتم رفض الطلب
+      callback(new Error('هذا النطاق غير مسموح له بالوصول بسبب سياسة CORS.'));
+    }
+  },
   credentials: true, // السماح بإرسال الكوكيز والتوكن
   allowedHeaders: ['Content-Type', 'Authorization'] // السماح بالهيدرات الضرورية
-} ));
+};
+
+// تطبيق إعدادات CORS على جميع المسارات
+app.use(cors(corsOptions));
 
 // معالجة طلبات OPTIONS تلقائيًا (مهم لـ pre-flight)
-app.options('*', cors({
-  origin: 'https://chatzeus.vercel.app',
-  credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization']
-} ));
+app.options('*', cors(corsOptions));
+
 
 const oauth2Client = new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     "https://chatzeusb.vercel.app/auth/google/callback"
-  );
+   );
 
 app.use(express.json({ limit: '50mb' }));
 
