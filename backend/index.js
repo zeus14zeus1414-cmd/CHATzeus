@@ -582,7 +582,7 @@ const memPersona = mem.persona || '';
 res.write(`⟦AGENT:BEGIN|${memName}|${memRole}⟧`);
 await streamOneModel(
   mem.provider || 'gemini',
-  mem.model || 'gemini-1.5-flash',
+  mem.model || 'gemini-2.5-flash',
   [
     ...teamThread,
     {
@@ -1419,7 +1419,7 @@ const useSearch = (settings.enableWebBrowsing === true || triggerByUser)
           'gemini-2.0-flash'
         ];
 
-        let chosenModel = settings.model || 'gemini-1.5-flash';
+        let chosenModel = settings.model || 'gemini-2.5-flash';
 
         // ✅ التحقق من دعم النموذج للبحث
         if (useSearch && !searchSupportedModels.includes(chosenModel)) {
