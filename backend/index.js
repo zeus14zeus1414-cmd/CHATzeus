@@ -1412,8 +1412,7 @@ const useSearch = (settings.enableWebBrowsing === true || triggerByUser)
         });
 
         // ✅ النماذج المدعومة للبحث (محدثة)
-        const searchSupportedModels = [
-          'gemini-1.5-flash', 
+        const searchSupportedModels = [ 
           'gemini-1.5-pro',
           'gemini-2.5-flash',
           'gemini-2.5-pro',
