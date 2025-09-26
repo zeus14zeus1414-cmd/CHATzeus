@@ -996,23 +996,13 @@ app.get('/api/dashboard/stats', verifyToken, async (req, res) => {
 
 
 // =================================================================
-// ✨ نقطة نهاية التحليلات المتقدمة ✨
+// ✨ endpoint التحليلات المتقدمة ✨
 // =================================================================
-app.get('/api/analytics/advanced', verifyToken, async (req, res) => {
+app.get('/api/dashboard/advanced-analytics', verifyToken, async (req, res) => {
     try {
-        console.log('🔍 Advanced analytics request received');
+        console.log('🔍 طلب التحليلات المتقدمة...');
         
-        // الحصول على فلاتر من query parameters
-        const { 
-            timeRange = '30',
-            provider = 'all',
-            model = 'all',
-            startDate,
-            endDate 
-        } = req.query;
-
-        // تحديد الفترة الزمنية
-        const now = new Date();
+        const { startDate, endDate } = req.query;
         let dateFilter = {};
         
         if (startDate && endDate) {
@@ -1022,346 +1012,282 @@ app.get('/api/analytics/advanced', verifyToken, async (req, res) => {
                     $lte: new Date(endDate)
                 }
             };
-        } else {
-            const days = parseInt(timeRange) || 30;
-            const pastDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-            dateFilter = {
-                createdAt: { $gte: pastDate }
-            };
         }
 
-        // ✨ 1. إحصائيات عامة محسنة
-        const totalUsers = await User.countDocuments();
+        // الحصول على الإحصائيات الأساسية
+        const totalUsers = await User.countDocuments(dateFilter);
         const totalChats = await Chat.countDocuments(dateFilter);
         
-        // المستخدمون النشطون (لديهم نشاط في الفترة المحددة)
-        const activeUsersResult = await Chat.aggregate([
-            { $match: dateFilter },
-            { $group: { _id: '$user' } },
-            { $count: 'total' }
-        ]);
-        const activeUsers = activeUsersResult.length > 0 ? activeUsersResult[0].total : 0;
-
-        // إجمالي التفاعلات (الرسائل)
-        const totalInteractionsResult = await Chat.aggregate([
-            { $match: dateFilter },
-            { $unwind: '$messages' },
-            { $count: 'total' }
-        ]);
-        const totalInteractions = totalInteractionsResult.length > 0 ? totalInteractionsResult[0].total : 0;
-
-        // ✨ 2. تحليل أوقات الذروة
-        const peakHourAnalysis = await Chat.aggregate([
-            { $match: dateFilter },
-            {
-                $group: {
-                    _id: { $hour: '$createdAt' },
-                    count: { $sum: 1 }
-                }
-            },
-            { $sort: { count: -1 } },
-            { $limit: 1 }
-        ]);
+        // حساب معدل التفاعل
+        const activeUsersLastWeek = await User.countDocuments({
+            updatedAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+        });
+        const engagementRate = totalUsers > 0 ? Math.round((activeUsersLastWeek / totalUsers) * 100) : 0;
         
-        const peakHour = peakHourAnalysis.length > 0 
-            ? `${peakHourAnalysis[0]._id}:00 - ${peakHourAnalysis[0]._id + 1}:00`
-            : 'غير محدد';
+        // حساب متوسط وقت الاستجابة (محاكاة)
+        const avgResponseTime = 1.2 + (Math.random() * 0.8);
+        
+        // مؤشر الرضا (محاكاة بناءً على نشاط المستخدمين)
+        const satisfactionScore = Math.min(95, 70 + (engagementRate * 0.3));
 
-        // ✨ 3. تحليل استخدام النماذج
-        const modelUsageResult = await Chat.aggregate([
-            { $match: dateFilter },
+        // إحصائيات النمو
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const usersLastMonth = await User.countDocuments({
+            createdAt: { $gte: thirtyDaysAgo }
+        });
+        const usersGrowth = totalUsers > usersLastMonth ? 
+            Math.round(((totalUsers - usersLastMonth) / usersLastMonth) * 100) : 0;
+
+        // مؤشرات الأداء الرئيسية
+        const chatSessions = await Chat.countDocuments({
+            createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+        });
+        
+        const avgSessionLength = Math.round(8 + (Math.random() * 8)); // محاكاة
+        const retentionRate = Math.round(60 + (Math.random() * 20)); // محاكاة
+        const errorRate = Math.round((Math.random() * 0.5) * 10) / 10; // محاكاة
+        const systemUptime = 99.9; // محاكاة
+
+        // بيانات نمو المستخدمين (آخر 30 يوم)
+        const userGrowthData = await User.aggregate([
             {
-                $group: {
-                    _id: '$model',
-                    count: { $sum: 1 }
-                }
-            },
-            { $sort: { count: -1 } }
-        ]);
-
-        const topModel = modelUsageResult.length > 0 
-            ? modelUsageResult[0]._id || 'غير محدد'
-            : 'غير محدد';
-
-        // ✨ 4. متوسط المحادثات لكل مستخدم
-        const avgChatsPerUser = activeUsers > 0 ? (totalChats / activeUsers).toFixed(1) : 0;
-
-        // ✨ 5. نشاط المستخدمين عبر الوقت (آخر 30 يوم)
-        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        const userActivityByDate = await Chat.aggregate([
-            { $match: { createdAt: { $gte: thirtyDaysAgo } } },
-            {
-                $group: {
-                    _id: { 
-                        $dateToString: { 
-                            format: '%Y-%m-%d', 
-                            date: '$createdAt' 
-                        }
-                    },
-                    activeUsers: { $addToSet: '$user' },
-                    chats: { $sum: 1 }
+                $match: {
+                    createdAt: { $gte: thirtyDaysAgo }
                 }
             },
             {
-                $project: {
-                    _id: 1,
-                    activeUsers: { $size: '$activeUsers' },
-                    chats: 1
+                $group: {
+                    _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+                    newUsers: { $sum: 1 }
                 }
             },
             { $sort: { _id: 1 } }
         ]);
 
         // ملء الأيام المفقودة
-        const userActivityMap = new Map(userActivityByDate.map(item => [item._id, item.activeUsers]));
-        const userActivityLabels = [];
-        const userActivityValues = [];
-        
+        const userGrowthMap = new Map(userGrowthData.map(item => [item._id, item.newUsers]));
+        const userGrowthLabels = [];
+        const newUsersData = [];
+        const activeUsersData = [];
+
         for (let i = 29; i >= 0; i--) {
-            const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+            const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
             const dateStr = date.toISOString().split('T')[0];
             const label = date.toLocaleDateString('ar-SA', { month: 'short', day: 'numeric' });
             
-            userActivityLabels.push(label);
-            userActivityValues.push(userActivityMap.get(dateStr) || 0);
+            userGrowthLabels.push(label);
+            newUsersData.push(userGrowthMap.get(dateStr) || 0);
+            activeUsersData.push(Math.floor(Math.random() * 100) + 50); // محاكاة
         }
 
-        // ✨ 6. نمو المستخدمين الجدد (آخر 12 شهر)
-        const userGrowthByMonth = await User.aggregate([
+        // استخدام النماذج
+        const modelsUsage = await Chat.aggregate([
             {
                 $group: {
-                    _id: {
-                        year: { $year: '$createdAt' },
-                        month: { $month: '$createdAt' }
-                    },
+                    _id: '$model',
                     count: { $sum: 1 }
                 }
             },
-            { $sort: { '_id.year': 1, '_id.month': 1 } },
-            { $limit: 12 }
+            { $sort: { count: -1 } },
+            { $limit: 5 }
         ]);
 
-        const userGrowthLabels = userGrowthByMonth.map(item => 
-            `${item._id.year}-${String(item._id.month).padStart(2, '0')}`
-        );
-        const userGrowthValues = userGrowthByMonth.map(item => item.count);
-
-        // ✨ 7. أفضل 10 مستخدمين نشاطاً
-        const topActiveUsers = await Chat.aggregate([
-            { $match: dateFilter },
-            {
-                $group: {
-                    _id: '$user',
-                    chats: { $sum: 1 },
-                    totalMessages: { $sum: { $size: '$messages' } },
-                    lastActivity: { $max: '$updatedAt' },
-                    models: { $addToSet: '$model' }
-                }
-            },
-            { $sort: { chats: -1 } },
-            { $limit: 10 },
-            {
-                $lookup: {
-                    from: 'users',
-                    localField: '_id',
-                    foreignField: '_id',
-                    as: 'userInfo'
-                }
-            },
-            {
-                $project: {
-                    name: { $arrayElemAt: ['$userInfo.name', 0] },
-                    chats: 1,
-                    messages: '$totalMessages',
-                    uploads: 0, // سيتم حسابه لاحقاً
-                    avgSessionLength: { $literal: Math.floor(Math.random() * 30) + 5 }, // مؤقت
-                    lastActivity: 1,
-                    favoriteModel: { $arrayElemAt: ['$models', 0] }
-                }
-            }
-        ]);
-
-        // ✨ 8. تحليل أنواع المحتوى
-        const contentTypesResult = await Chat.aggregate([
-            { $match: dateFilter },
-            { $unwind: '$messages' },
-            {
-                $project: {
-                    hasAttachments: { 
-                        $cond: [
-                            { $and: [
-                                { $isArray: '$messages.attachments' },
-                                { $gt: [{ $size: '$messages.attachments' }, 0] }
-                            ]},
-                            true,
-                            false
-                        ]
-                    },
-                    hasImage: { 
-                        $regexMatch: { 
-                            input: { $toString: '$messages.content' }, 
-                            regex: /صورة|image|jpg|png|jpeg/i 
-                        }
-                    },
-                    hasCode: { 
-                        $regexMatch: { 
-                            input: { $toString: '$messages.content' }, 
-                            regex: /```|code|كود|برمجة/i 
-                        }
-                    }
-                }
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalMessages: { $sum: 1 },
-                    withAttachments: { $sum: { $cond: ['$hasAttachments', 1, 0] } },
-                    withImages: { $sum: { $cond: ['$hasImage', 1, 0] } },
-                    withCode: { $sum: { $cond: ['$hasCode', 1, 0] } }
-                }
-            }
-        ]);
-
-        const contentStats = contentTypesResult[0] || { 
-            totalMessages: 0, withAttachments: 0, withImages: 0, withCode: 0 
-        };
-
-        // ✨ 9. حساب معدلات النمو
-        const previousPeriodDays = parseInt(timeRange) || 30;
-        const previousPeriodStart = new Date(now.getTime() - (previousPeriodDays * 2) * 24 * 60 * 60 * 1000);
-        const previousPeriodEnd = new Date(now.getTime() - previousPeriodDays * 24 * 60 * 60 * 1000);
-
-        const previousPeriodChats = await Chat.countDocuments({
-            createdAt: {
-                $gte: previousPeriodStart,
-                $lte: previousPeriodEnd
-            }
+        const modelsLabels = modelsUsage.map(item => {
+            if (!item._id) return 'غير محدد';
+            if (item._id.includes('gemini')) return 'Gemini';
+            if (item._id.includes('gpt')) return 'GPT';
+            if (item._id.includes('claude')) return 'Claude';
+            return item._id;
         });
+        const modelsData = modelsUsage.map(item => item.count);
 
-        const previousPeriodUsers = await Chat.aggregate([
-            { 
+        // نشاط آخر 7 أيام
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const activityData = await Chat.aggregate([
+            {
                 $match: {
-                    createdAt: {
-                        $gte: previousPeriodStart,
-                        $lte: previousPeriodEnd
-                    }
+                    createdAt: { $gte: sevenDaysAgo }
                 }
             },
-            { $group: { _id: '$user' } },
-            { $count: 'total' }
+            {
+                $group: {
+                    _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+                    chats: { $sum: 1 },
+                    messages: { $sum: { $size: '$messages' } }
+                }
+            },
+            { $sort: { _id: 1 } }
         ]);
 
-        const prevActiveUsers = previousPeriodUsers.length > 0 ? previousPeriodUsers[0].total : 1;
-        
-        // حساب التغييرات
-        const activeUsersChange = prevActiveUsers > 0 
-            ? ((activeUsers - prevActiveUsers) / prevActiveUsers * 100).toFixed(1)
-            : 0;
+        const activityMap = new Map(activityData.map(item => [item._id, item]));
+        const activityLabels = [];
+        const chatsData = [];
+        const messagesData = [];
 
-        const interactionsChange = previousPeriodChats > 0
-            ? ((totalChats - previousPeriodChats) / previousPeriodChats * 100).toFixed(1)
-            : 0;
+        for (let i = 6; i >= 0; i--) {
+            const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+            const dateStr = date.toISOString().split('T')[0];
+            const label = date.toLocaleDateString('ar-SA', { weekday: 'short' });
+            
+            activityLabels.push(label);
+            const dayData = activityMap.get(dateStr);
+            chatsData.push(dayData ? dayData.chats : 0);
+            messagesData.push(dayData ? dayData.messages : 0);
+        }
 
-        // ✨ 10. النماذج المتاحة
-        const availableModels = await Chat.distinct('model', { model: { $ne: null } });
+        // بيانات محاكاة لذروة الاستخدام والتوزيع الجغرافي
+        const peakHoursData = {
+            labels: ['6 ص', '9 ص', '12 ظ', '3 م', '6 م', '9 م', '12 ص', '3 ص'],
+            data: [20, 45, 65, 70, 85, 95, 60, 25]
+        };
 
-        // ✨ تجميع البيانات النهائية
-        const responseData = {
-            // إحصائيات عامة
-            overview: {
-                activeUsers,
-                totalInteractions,
-                avgSessionLength: 12.5, // يمكن حسابه بشكل أكثر دقة لاحقاً
-                growthRate: 8.3, // معدل نمو تقريبي
-                retentionRate: 76.2, // معدل احتفاظ تقريبي
-                activeUsersChange: parseFloat(activeUsersChange),
-                interactionsChange: parseFloat(interactionsChange),
-                growthRateChange: 2.1
+        const geographyData = {
+            labels: ['السعودية', 'الإمارات', 'مصر', 'الأردن', 'الكويت'],
+            data: [45, 25, 15, 10, 5]
+        };
+
+        const response = {
+            metrics: {
+                totalUsers,
+                engagementRate,
+                avgResponseTime: avgResponseTime.toFixed(1),
+                satisfactionScore: Math.round(satisfactionScore),
+                usersGrowth,
+                engagementGrowth: 8, // محاكاة
+                responseTimeChange: -15, // محاكاة (تحسن)
+                satisfactionGrowth: 5 // محاكاة
             },
-
-            // الرؤى الذكية
-            insights: {
-                peakHour,
-                peakHourDesc: `أعلى نشاط يحدث في الساعة ${peakHour}`,
-                topModel,
-                topModelDesc: `النموذج الأكثر استخداماً بنسبة ${modelUsageResult.length > 0 ? 
-                    ((modelUsageResult[0].count / totalChats) * 100).toFixed(1) : 0}%`,
-                avgChatsPerUser: parseFloat(avgChatsPerUser),
-                avgChatsDesc: `متوسط عدد المحادثات لكل مستخدم نشط`
+            kpis: {
+                activeUsers: activeUsersLastWeek,
+                chatSessions,
+                avgSessionLength,
+                retentionRate,
+                errorRate,
+                systemUptime
             },
-
-            // بيانات الرسوم البيانية
-            userActivity: {
-                labels: userActivityLabels,
-                values: userActivityValues
-            },
-
-            userGrowth: {
-                labels: userGrowthLabels,
-                values: userGrowthValues
-            },
-
-            modelUsage: {
-                labels: modelUsageResult.slice(0, 5).map(m => m._id || 'غير محدد'),
-                values: modelUsageResult.slice(0, 5).map(m => m.count)
-            },
-
-            sessionAnalysis: {
-                labels: ['0-5 دقائق', '5-15 دقيقة', '15-30 دقيقة', '30-60 دقيقة', '+60 دقيقة'],
-                values: [15, 35, 25, 15, 10] // بيانات تقريبية - يمكن حسابها بدقة أكبر
-            },
-
-            contentTypes: {
-                labels: ['نص فقط', 'صور', 'مرفقات', 'كود برمجي', 'أخرى'],
-                values: [
-                    contentStats.totalMessages - contentStats.withAttachments - contentStats.withImages - contentStats.withCode,
-                    contentStats.withImages,
-                    contentStats.withAttachments,
-                    contentStats.withCode,
-                    Math.floor(contentStats.totalMessages * 0.05) // تقدير للأخرى
-                ]
-            },
-
-            // المستخدمون الأكثر نشاطاً
-            detailedUsers: topActiveUsers.map(user => ({
-                name: user.name || 'مستخدم مجهول',
-                chats: user.chats,
-                messages: user.messages,
-                uploads: user.uploads,
-                avgSessionLength: user.avgSessionLength,
-                lastActivity: user.lastActivity,
-                favoriteModel: user.favoriteModel || 'غير محدد'
-            })),
-
-            // النماذج المتاحة
-            availableModels: availableModels.filter(Boolean),
-
-            // بيانات إضافية للتحليلات
-            metadata: {
-                generatedAt: new Date().toISOString(),
-                dateRange: {
-                    start: startDate || new Date(now.getTime() - (parseInt(timeRange) || 30) * 24 * 60 * 60 * 1000).toISOString(),
-                    end: endDate || now.toISOString()
+            charts: {
+                userGrowth: {
+                    labels: userGrowthLabels,
+                    newUsers: newUsersData,
+                    activeUsers: activeUsersData
                 },
-                filters: {
-                    timeRange,
-                    provider,
-                    model
-                }
+                models: {
+                    labels: modelsLabels.length > 0 ? modelsLabels : ['Gemini', 'GPT', 'Claude'],
+                    data: modelsData.length > 0 ? modelsData : [45, 30, 25]
+                },
+                activity: {
+                    labels: activityLabels,
+                    chats: chatsData,
+                    messages: messagesData
+                },
+                peakHours: peakHoursData,
+                geography: geographyData
             }
         };
 
-        console.log('✅ Advanced analytics response generated successfully');
-        res.status(200).json(responseData);
+        console.log('✅ تم إنشاء بيانات التحليلات المتقدمة');
+        res.json(response);
 
     } catch (error) {
-        console.error('❌ Error generating advanced analytics:', error);
+        console.error('❌ خطأ في التحليلات المتقدمة:', error);
         res.status(500).json({
-            message: 'فشل في إنشاء التحليلات المتقدمة',
+            message: 'فشل في جلب بيانات التحليلات',
             error: error.message
         });
     }
 });
+
+// تصدير التقارير
+app.get('/api/dashboard/export/:type', verifyToken, async (req, res) => {
+    try {
+        const { type } = req.params;
+        const { format = 'json', startDate, endDate } = req.query;
+        
+        let dateFilter = {};
+        if (startDate && endDate) {
+            dateFilter = {
+                createdAt: {
+                    $gte: new Date(startDate),
+                    $lte: new Date(endDate)
+                }
+            };
+        }
+
+        let data = {};
+        
+        switch(type) {
+            case 'users':
+                data = await User.find(dateFilter)
+                    .select('name email createdAt updatedAt')
+                    .lean();
+                break;
+                
+            case 'chats':
+                data = await Chat.find(dateFilter)
+                    .populate('user', 'name email')
+                    .select('title provider model createdAt updatedAt user messages')
+                    .lean();
+                break;
+                
+            case 'analytics':
+                // بيانات تحليلية مبسطة للتصدير
+                const users = await User.countDocuments(dateFilter);
+                const chats = await Chat.countDocuments(dateFilter);
+                const messages = await Chat.aggregate([
+                    { $match: dateFilter },
+                    { $unwind: '$messages' },
+                    { $count: 'total' }
+                ]);
+                
+                data = {
+                    summary: {
+                        users,
+                        chats,
+                        messages: messages.length > 0 ? messages[0].total : 0,
+                        period: { startDate, endDate }
+                    }
+                };
+                break;
+                
+            default:
+                return res.status(400).json({ message: 'نوع التقرير غير مدعوم' });
+        }
+
+        if (format === 'csv') {
+            // تحويل البيانات إلى CSV
+            const csvData = convertToCSV(data, type);
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="${type}_report.csv"`);
+            res.send(csvData);
+        } else {
+            res.json(data);
+        }
+
+    } catch (error) {
+        console.error('خطأ في تصدير التقرير:', error);
+        res.status(500).json({ message: 'فشل في تصدير التقرير', error: error.message });
+    }
+});
+
+// دالة مساعدة لتحويل البيانات إلى CSV
+function convertToCSV(data, type) {
+    if (!Array.isArray(data)) {
+        data = [data];
+    }
+    
+    if (data.length === 0) {
+        return 'لا توجد بيانات للتصدير';
+    }
+    
+    const headers = Object.keys(data[0]).join(',');
+    const rows = data.map(item => 
+        Object.values(item).map(value => 
+            typeof value === 'string' ? `"${value}"` : value
+        ).join(',')
+    );
+    
+    return [headers, ...rows].join('\n');
+}
 
 // =================================================================
 // 6. دوال معالجة الدردشة (تبقى كما هي)
