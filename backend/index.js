@@ -1398,6 +1398,15 @@ async function handleGeminiRequest(payload, res) {
 
     await keyManager.tryKeys('gemini', settings.apiKeyRetryStrategy, userApiKeys, async (apiKey) => {
         const genAI = new GoogleGenerativeAI(apiKey);
+        
+        // التحقق من نوع النموذج (صورة أم نص)
+        const isImageModel = settings.model === 'gemini-2.5-flash-image-preview';
+        
+        if (isImageModel) {
+            return await handleImageGeneration(payload, res, genAI);
+        }
+        
+    
 
         // ✅ تفعيل البحث إذا كان مفعّل بالإعدادات أو مفروض من الرسالة
         const triggerByUser = meta && meta.forceWebBrowsing === true;
