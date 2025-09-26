@@ -1343,7 +1343,7 @@ async function handleChatRequest(req, res) {
         // ✨ التحقق من وجود الإعدادات والمزود قبل أي شيء آخر ✨
         if (!payload.settings || !payload.settings.provider) {
             // إذا لم يكن هناك مزود، أرسل خطأ واضحًا بدلاً من الانهيار
-            throw new Error('Provider information is missing in the request settings.');
+            throw new Error('معلومات المزود مفقودة في إعدادات الطلب.');
         }
         const { provider } = payload.settings;
 
@@ -1355,7 +1355,37 @@ async function handleChatRequest(req, res) {
         
     } catch (error) {
         console.error('Error processing chat request:', error.message);
-        res.status(500).json({ error: error.message });
+        
+        // ✨ معالجة محسنة لرسائل الخطأ ✨
+        let userFriendlyMessage = error.message;
+        
+        // معالجة أخطاء الكوتا
+        if (error.message.includes('quota') || error.message.includes('429')) {
+            userFriendlyMessage = `تم تجاوز الحد المسموح لاستخدام API.
+
+🔧 الحلول المقترحة:
+• تحقق من رصيد حسابك على Google AI Studio
+• جرب استخدام مفتاح API آخر إن كان متاحاً
+• انتظر قليلاً ثم أعد المحاولة
+
+💡 يمكنك أيضاً التبديل إلى مزود آخر من الإعدادات.`;
+        }
+        
+        // معالجة أخطاء الشبكة
+        else if (error.message.includes('ECONNRESET') || error.message.includes('ETIMEDOUT')) {
+            userFriendlyMessage = `حدث خطأ في الاتصال بالشبكة.
+
+🔧 يرجى المحاولة مرة أخرى خلال دقائق قليلة.`;
+        }
+        
+        // معالجة أخطاء مفتاح API غير صالح
+        else if (error.message.includes('API key') || error.message.includes('401')) {
+            userFriendlyMessage = `مفتاح API غير صالح أو منتهي الصلاحية.
+
+🔧 يرجى التحقق من مفاتيح API في الإعدادات والتأكد من صحتها.`;
+        }
+        
+        res.status(500).json({ error: userFriendlyMessage });
     }
 }
 // =================================================================
@@ -1394,8 +1424,16 @@ const useSearch = (settings.enableWebBrowsing === true || triggerByUser)
 
         // ✅ التحقق من دعم النموذج للبحث
         if (useSearch && !searchSupportedModels.includes(chosenModel)) {
-          console.log(`⚠️ Model ${chosenModel} doesn't support search, falling back to gemini-1.5-flash`);
-          chosenModel = 'gemini-1.5-flash';
+          const supportedModelsText = searchSupportedModels.join(', ');
+          throw new Error(`النموذج "${chosenModel}" لا يدعم البحث في الويب.
+
+للاستفادة من ميزة البحث، يمكنك اختيار أحد الخيارات التالية:
+
+🔧 الحلول المتاحة:
+• تغيير النموذج إلى أحد النماذج المدعومة: ${supportedModelsText}
+• إيقاف تفعيل البحث في الويب من الإعدادات
+
+💡 نوصي باستخدام "gemini-2.5-flash" للحصول على أفضل أداء مع البحث.`);
         }
 
         console.log(`🤖 Using model: ${chosenModel} with search: ${useSearch}`);
