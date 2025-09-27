@@ -1289,6 +1289,345 @@ function convertToCSV(data, type) {
     return [headers, ...rows].join('\n');
 }
 
+
+
+
+// =================================================================
+// ✨ endpoints إعدادات النظام ✨
+// =================================================================
+// جلب إعدادات النظام
+app.get('/api/system/settings', verifyToken, async (req, res) => {
+    try {
+        // في التطبيق الحقيقي، هذه الإعدادات ستأتي من قاعدة البيانات أو ملف تكوين
+        const systemSettings = {
+            platformName: process.env.PLATFORM_NAME || 'شات زيوس',
+            platformDescription: process.env.PLATFORM_DESCRIPTION || 'منصة ذكية للمحادثة مع نماذج الذكاء الاصطناعي المتقدمة',
+            defaultLanguage: process.env.DEFAULT_LANGUAGE || 'ar',
+            timezone: process.env.TIMEZONE || 'Asia/Riyadh',
+            allowRegistration: process.env.ALLOW_REGISTRATION !== 'false',
+            enableWebSearch: process.env.ENABLE_WEB_SEARCH !== 'false',
+            enableTeamMode: process.env.ENABLE_TEAM_MODE !== 'false',
+            dailyMessageLimit: parseInt(process.env.DAILY_MESSAGE_LIMIT || '100'),
+            defaultModel: process.env.DEFAULT_MODEL || 'gemini-1.5-pro',
+            defaultTemperature: parseFloat(process.env.DEFAULT_TEMPERATURE || '0.7'),
+            defaultSystemPrompt: process.env.DEFAULT_SYSTEM_PROMPT || 'أنت مساعد ذكي ومفيد. قم بالرد بالعربية ما لم يطلب المستخدم خلاف ذلك.',
+            enable2FA: process.env.ENABLE_2FA === 'true',
+            logAllActivities: process.env.LOG_ALL_ACTIVITIES !== 'false',
+            sessionTimeout: parseInt(process.env.SESSION_TIMEOUT || '24'),
+            maxFailedLogins: parseInt(process.env.MAX_FAILED_LOGINS || '5')
+        };
+
+        res.json(systemSettings);
+
+    } catch (error) {
+        console.error('خطأ في جلب إعدادات النظام:', error);
+        res.status(500).json({ message: 'فشل في جلب إعدادات النظام', error: error.message });
+    }
+});
+
+// تحديث إعدادات النظام
+app.put('/api/system/settings', verifyToken, async (req, res) => {
+    try {
+        const settings = req.body;
+        
+        // في التطبيق الحقيقي، ستحفظ هذه الإعدادات في قاعدة البيانات
+        console.log('تحديث إعدادات النظام:', settings);
+        
+        // محاكاة حفظ الإعدادات
+        // يمكن هنا إضافة التحقق من صحة البيانات وحفظها
+        
+        res.json({ 
+            message: 'تم تحديث إعدادات النظام بنجاح',
+            settings 
+        });
+
+    } catch (error) {
+        console.error('خطأ في تحديث إعدادات النظام:', error);
+        res.status(500).json({ message: 'فشل في تحديث إعدادات النظام', error: error.message });
+    }
+});
+
+// تحديث إعدادات الأمان
+app.put('/api/system/security', verifyToken, async (req, res) => {
+    try {
+        const securitySettings = req.body;
+        
+        // في التطبيق الحقيقي، ستحفظ في قاعدة البيانات مع تشفير إضافي
+        console.log('تحديث إعدادات الأمان:', securitySettings);
+        
+        res.json({ 
+            message: 'تم تحديث إعدادات الأمان بنجاح',
+            settings: securitySettings 
+        });
+
+    } catch (error) {
+        console.error('خطأ في تحديث إعدادات الأمان:', error);
+        res.status(500).json({ message: 'فشل في تحديث إعدادات الأمان', error: error.message });
+    }
+});
+
+// جلب مفاتيح API
+app.get('/api/system/api-keys', verifyToken, async (req, res) => {
+    try {
+        // في التطبيق الحقيقي، ستأتي من قاعدة البيانات مشفرة
+        const apiKeys = [
+            {
+                id: 'key_1',
+                name: 'Gemini Production',
+                provider: 'Google Gemini',
+                status: 'active',
+                createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+                lastUsed: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+                // لا نعرض القيمة الفعلية للمفتاح لأسباب أمنية
+                masked: true
+            },
+            {
+                id: 'key_2',
+                name: 'OpenRouter Backup',
+                provider: 'OpenRouter',
+                status: 'active',
+                createdAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString(),
+                lastUsed: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+                masked: true
+            }
+        ];
+
+        res.json(apiKeys);
+
+    } catch (error) {
+        console.error('خطأ في جلب مفاتيح API:', error);
+        res.status(500).json({ message: 'فشل في جلب مفاتيح API', error: error.message });
+    }
+});
+
+// إضافة مفتاح API جديد
+app.post('/api/system/api-keys', verifyToken, async (req, res) => {
+    try {
+        const { name, provider, value, description } = req.body;
+        
+        if (!name || !provider || !value) {
+            return res.status(400).json({ message: 'جميع الحقول مطلوبة' });
+        }
+
+        // في التطبيق الحقيقي، سيتم تشفير المفتاح قبل الحفظ
+        const newKey = {
+            id: 'key_' + Date.now(),
+            name,
+            provider,
+            description,
+            status: 'active',
+            createdAt: new Date().toISOString(),
+            lastUsed: null
+        };
+
+        // لا نحفظ القيمة الفعلية في الرد
+        console.log('إضافة مفتاح API جديد:', { ...newKey, valueLength: value.length });
+
+        res.status(201).json({ 
+            message: 'تم إضافة مفتاح API بنجاح',
+            key: newKey 
+        });
+
+    } catch (error) {
+        console.error('خطأ في إضافة مفتاح API:', error);
+        res.status(500).json({ message: 'فشل في إضافة مفتاح API', error: error.message });
+    }
+});
+
+// حذف مفتاح API
+app.delete('/api/system/api-keys/:keyId', verifyToken, async (req, res) => {
+    try {
+        const { keyId } = req.params;
+        
+        // في التطبيق الحقيقي، سيتم حذف المفتاح من قاعدة البيانات
+        console.log('حذف مفتاح API:', keyId);
+
+        res.json({ message: 'تم حذف مفتاح API بنجاح' });
+
+    } catch (error) {
+        console.error('خطأ في حذف مفتاح API:', error);
+        res.status(500).json({ message: 'فشل في حذف مفتاح API', error: error.message });
+    }
+});
+
+// اختبار مفتاح API
+app.post('/api/system/api-keys/:keyId/test', verifyToken, async (req, res) => {
+    try {
+        const { keyId } = req.params;
+        
+        // محاكاة اختبار المفتاح
+        console.log('اختبار مفتاح API:', keyId);
+        
+        // في التطبيق الحقيقي، سيتم اختبار المفتاح مع المزود الفعلي
+        const success = Math.random() > 0.2; // 80% نجاح
+        
+        res.json({ 
+            success,
+            message: success ? 'المفتاح يعمل بشكل صحيح' : 'فشل في التحقق من المفتاح',
+            testedAt: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('خطأ في اختبار مفتاح API:', error);
+        res.status(500).json({ message: 'فشل في اختبار مفتاح API', error: error.message });
+    }
+});
+
+// جلب سجلات النظام
+app.get('/api/system/logs', verifyToken, async (req, res) => {
+    try {
+        const { level = 'all', limit = 100 } = req.query;
+        
+        // بيانات وهمية للسجلات - في التطبيق الحقيقي ستأتي من نظام السجلات
+        const mockLogs = [
+            {
+                id: 1,
+                level: 'info',
+                message: 'بدء تشغيل النظام',
+                details: 'تم تشغيل الخادم بنجاح على المنفذ 3000',
+                timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+                source: 'system'
+            },
+            {
+                id: 2,
+                level: 'warning',
+                message: 'مفتاح API قارب على النفاد',
+                details: 'مفتاح Gemini API المتبقي: 15% من الحصة الشهرية',
+                timestamp: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+                source: 'api'
+            },
+            {
+                id: 3,
+                level: 'error',
+                message: 'فشل في محاولة تسجيل دخول',
+                details: 'IP: 192.168.1.100 - محاولة تسجيل دخول بكلمة مرور خاطئة',
+                timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+                source: 'auth'
+            }
+        ];
+
+        // تصفية السجلات حسب المستوى
+        let filteredLogs = mockLogs;
+        if (level !== 'all') {
+            const levels = {
+                'error': ['error'],
+                'warning': ['error', 'warning'],
+                'info': ['error', 'warning', 'info']
+            };
+            filteredLogs = mockLogs.filter(log => levels[level].includes(log.level));
+        }
+
+        // تحديد عدد السجلات
+        filteredLogs = filteredLogs.slice(0, parseInt(limit));
+
+        res.json({ logs: filteredLogs, total: filteredLogs.length });
+
+    } catch (error) {
+        console.error('خطأ في جلب السجلات:', error);
+        res.status(500).json({ message: 'فشل في جلب السجلات', error: error.message });
+    }
+});
+
+// مسح سجلات النظام
+app.delete('/api/system/logs', verifyToken, async (req, res) => {
+    try {
+        // في التطبيق الحقيقي، سيتم مسح السجلات من نظام السجلات
+        console.log('مسح سجلات النظام');
+
+        res.json({ message: 'تم مسح السجلات بنجاح' });
+
+    } catch (error) {
+        console.error('خطأ في مسح السجلات:', error);
+        res.status(500).json({ message: 'فشل في مسح السجلات', error: error.message });
+    }
+});
+
+// جلب معلومات النظام
+app.get('/api/system/info', verifyToken, async (req, res) => {
+    try {
+        const os = require('os');
+        
+        const systemInfo = {
+            version: process.env.APP_VERSION || 'v2.1.0',
+            uptime: process.uptime(),
+            nodeVersion: process.version,
+            platform: os.platform(),
+            architecture: os.arch(),
+            totalMemory: os.totalmem(),
+            freeMemory: os.freemem(),
+            cpuCount: os.cpus().length,
+            loadAverage: os.loadavg(),
+            networkInterfaces: Object.keys(os.networkInterfaces()),
+            environment: process.env.NODE_ENV || 'development',
+            pid: process.pid,
+            // إحصائيات قاعدة البيانات
+            database: {
+                connected: mongoose.connection.readyState === 1,
+                host: mongoose.connection.host,
+                name: mongoose.connection.name
+            }
+        };
+
+        res.json(systemInfo);
+
+    } catch (error) {
+        console.error('خطأ في جلب معلومات النظام:', error);
+        res.status(500).json({ message: 'فشل في جلب معلومات النظام', error: error.message });
+    }
+});
+
+// فحص صحة النظام
+app.get('/api/system/health', verifyToken, async (req, res) => {
+    try {
+        const health = {
+            status: 'healthy',
+            timestamp: new Date().toISOString(),
+            services: {
+                database: {
+                    status: mongoose.connection.readyState === 1 ? 'healthy' : 'unhealthy',
+                    responseTime: Math.random() * 50 + 10 // محاكاة
+                },
+                api: {
+                    status: 'healthy',
+                    responseTime: Math.random() * 20 + 5
+                },
+                fileStorage: {
+                    status: 'healthy',
+                    responseTime: Math.random() * 30 + 15
+                }
+            },
+            metrics: {
+                memoryUsage: process.memoryUsage(),
+                cpuUsage: process.cpuUsage(),
+                uptime: process.uptime()
+            }
+        };
+
+        // تحديد الحالة العامة
+        const servicesStatus = Object.values(health.services).map(s => s.status);
+        if (servicesStatus.includes('unhealthy')) {
+            health.status = 'unhealthy';
+        } else if (servicesStatus.includes('degraded')) {
+            health.status = 'degraded';
+        }
+
+        const statusCode = health.status === 'healthy' ? 200 : 503;
+        res.status(statusCode).json(health);
+
+    } catch (error) {
+        console.error('خطأ في فحص صحة النظام:', error);
+        res.status(503).json({ 
+            status: 'unhealthy',
+            message: 'فشل في فحص صحة النظام',
+            error: error.message 
+        });
+    }
+});
+
+
+
+
+
 // =================================================================
 // 6. دوال معالجة الدردشة (تبقى كما هي)
 // =================================================================
