@@ -6,11 +6,29 @@ from PIL import Image
 import glob
 import json
 
-# --- الإعدادات ---
-INPUT_FOLDER = "input_images"
-OUTPUT_FOLDER = "output_translations"
+# --- المسارات الديناميكية ---
+# سيتم تحديدها بناءً على اسم المشروع
+PROJECT_NAME = None
+BASE_PROJECTS_DIR = "projects"
+INPUT_FOLDER = None
+OUTPUT_FOLDER = None
+GLOSSARY_FILE = None
 FINAL_FILENAME = "full_chapter_translation.txt"
-GLOSSARY_FILE = "glossary.json"
+
+def setup_project_paths(project_name):
+    """إعداد المسارات بناءً على اسم المشروع المُعطى."""
+    global PROJECT_NAME, INPUT_FOLDER, OUTPUT_FOLDER, GLOSSARY_FILE
+    PROJECT_NAME = project_name
+    project_dir = os.path.join(BASE_PROJECTS_DIR, PROJECT_NAME)
+    
+    INPUT_FOLDER = os.path.join(project_dir, "input_images")
+    OUTPUT_FOLDER = os.path.join(project_dir, "output_translations")
+    GLOSSARY_FILE = os.path.join(project_dir, "glossary.json")
+    
+    # إنشاء المجلدات الضرورية للمشروع إذا لم تكن موجودة
+    os.makedirs(INPUT_FOLDER, exist_ok=True)
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    print(f"🗂️ تم تحديد المشروع: '{PROJECT_NAME}'. سيتم استخدام المسارات داخل مجلده الخاص.")
 
 def load_glossary():
     if not os.path.exists(GLOSSARY_FILE):
@@ -27,16 +45,11 @@ def save_glossary(glossary_data):
     with open(GLOSSARY_FILE, 'w', encoding='utf-8') as f:
         json.dump(glossary_data, f, ensure_ascii=False, indent=4)
 
+# --- باقي الدوال (translate_image, find_and_update_new_terms) تبقى كما هي ---
 def translate_image(image_path, model, glossary, previous_page_translation):
-    """
-    يستخدم البرومبت الدقيق الخاص بك مع إضافة قاعدة المسرد والترجمة الكاملة للصفحة السابقة كسياق.
-    """
     print(f"\n--- ⏳ جاري معالجة الصورة: {os.path.basename(image_path)} ---")
     img = Image.open(image_path)
-    
     glossary_text = "\n".join([f"- {k}: {v}" for k, v in glossary.items()])
-    
-    # --- بناء قسم السياق باستخدام الترجمة الكاملة السابقة ---
     context_section = ""
     if previous_page_translation:
         context_section = f"""
@@ -46,11 +59,8 @@ def translate_image(image_path, model, glossary, previous_page_translation):
 {previous_page_translation}
 --- نهاية سياق الصفحة السابقة ---
 """
-
-    # --- البرومبت الخاص بك مع إضافة قاعدة المسرد والسياق الكامل ---
     translation_prompt = f"""
 أنت خبير ومترجم مانهوا محترف. انظر إلى الصورة المرفقة وقم بما يلي:
-
 **القاعدة الأولى والأساسية: التزم بالمسرد التالي بشكل إلزامي:**
 --- بداية المسرد ---
 {glossary_text}
@@ -71,12 +81,10 @@ def translate_image(image_path, model, glossary, previous_page_translation):
 إذا وجدت نصًا خارج فقاعات الحوار، قم بترجمته بنفس الخطوات أعلاه لكن أضف في بداية السطر عبارة «تنبيه: نص خارج فقاعة».
 اجعل المخرج النهائي منظمًا وموجهًا من اليمين إلى اليسار وبدون أي تنسيق أو علامات خاصة.
     """
-    
     response = model.generate_content([translation_prompt, img])
     return response.text
 
 def find_and_update_new_terms(text_to_analyze, model, glossary):
-    # (هذه الدالة تبقى كما هي بدون تغيير)
     print("--- 🧠 البحث عن مصطلحات جديدة لتحديث المسرد...")
     extraction_prompt = f"""
     أنت مساعد متخصص في تحليل النصوص. انظر إلى النص التالي.
@@ -107,6 +115,16 @@ def find_and_update_new_terms(text_to_analyze, model, glossary):
         print(f"[تحذير] لم يتمكن من تحليل المصطلحات الجديدة. الخطأ: {e}")
 
 def main():
+    # --- التحقق من وجود اسم المشروع ---
+    if len(sys.argv) < 2:
+        print("❌ خطأ: يرجى تحديد اسم المشروع عند تشغيل السكربت.")
+        print("مثال: python3 run_translator.py solo-leveling")
+        sys.exit(1)
+    
+    project_name_arg = sys.argv[1]
+    setup_project_paths(project_name_arg)
+
+    # --- بقية الدالة main تعمل كالسابق ولكن على المسارات الجديدة ---
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -114,15 +132,10 @@ def main():
         sys.exit(1)
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
-    print("✅ Gemini API جاهز للعمل مع ذاكرة الترجمة الذكية وذاكرة السياق الكاملة.")
+    print("✅ Gemini API جاهز للعمل.")
 
     glossary = load_glossary()
-    print(f"✅ تم تحميل المسرد ويحتوي على {len(glossary)} مصطلح.")
-
-    if not os.path.isdir(INPUT_FOLDER):
-        print(f"[خطأ] مجلد الإدخال '{INPUT_FOLDER}' غير موجود.")
-        sys.exit(1)
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    print(f"✅ تم تحميل المسرد الخاص بالمشروع '{PROJECT_NAME}' ويحتوي على {len(glossary)} مصطلح.")
 
     image_paths = sorted(glob.glob(os.path.join(INPUT_FOLDER, '*.*')))
     if not image_paths:
@@ -131,15 +144,11 @@ def main():
     print(f"✅ تم العثور على {len(image_paths)} صورة. ستبدأ عملية الترجمة...")
 
     all_translations_for_final_file = []
-    
-    # *** التغيير هنا: سنخزن الترجمة الكاملة مباشرة ***
     previous_page_full_translation = None
 
     for path in image_paths:
-        # 1. ترجمة الصورة باستخدام المسرد والسياق الكامل السابق
         translation = translate_image(path, model, glossary, previous_page_full_translation)
         
-        # حفظ الترجمة المنفصلة
         base_name = os.path.basename(path)
         file_name_without_ext = os.path.splitext(base_name)[0]
         output_path = os.path.join(OUTPUT_FOLDER, f"{file_name_without_ext}.txt")
@@ -147,14 +156,11 @@ def main():
             f.write(translation)
         print(f"✅ تم حفظ الترجمة المنفصلة في: {output_path}")
         
-        # 2. تحديث المسرد بناءً على الترجمة الجديدة
         find_and_update_new_terms(translation, model, glossary)
         
-        # *** التغيير هنا: تحديث السياق للصفحة التالية بالترجمة الحالية الكاملة ***
         previous_page_full_translation = translation
         print(f"--- ✅ تم حفظ سياق الصفحة الكاملة للمرة القادمة.")
         
-        # تجميع الترجمات للملف النهائي
         page_separator = f"\n\n--- نهاية ترجمة صفحة: {base_name} ---\n\n"
         all_translations_for_final_file.append(translation + page_separator)
 
