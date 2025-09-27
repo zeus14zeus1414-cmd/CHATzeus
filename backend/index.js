@@ -1398,15 +1398,6 @@ async function handleGeminiRequest(payload, res) {
 
     await keyManager.tryKeys('gemini', settings.apiKeyRetryStrategy, userApiKeys, async (apiKey) => {
         const genAI = new GoogleGenerativeAI(apiKey);
-        
-        // التحقق من نوع النموذج (صورة أم نص)
-        const isImageModel = settings.model === 'gemini-2.5-flash-image-preview';
-        
-        if (isImageModel) {
-            return await handleImageGeneration(payload, res, genAI);
-        }
-        
-    
 
         // ✅ تفعيل البحث إذا كان مفعّل بالإعدادات أو مفروض من الرسالة
         const triggerByUser = meta && meta.forceWebBrowsing === true;
@@ -1679,59 +1670,6 @@ if (useSearch) {
           }
         }
     });
-}
-
-async function handleImageGeneration(payload, res, genAI) {
-    const { chatHistory, settings } = payload;
-    
-    // الحصول على آخر رسالة من المستخدم
-    const lastUserMessage = chatHistory.slice().reverse().find(msg => msg.role === 'user');
-    if (!lastUserMessage || !lastUserMessage.content) {
-        throw new Error('لم يتم العثور على نص لتوليد الصورة');
-    }
-
-    const model = genAI.getGenerativeModel({ model: settings.model });
-    
-    try {
-        res.writeHead(200, {
-            'Content-Type': 'text/plain; charset=utf-8',
-            'Transfer-Encoding': 'chunked'
-        });
-
-        // إرسال رسالة بداية توليد الصورة
-        res.write('IMAGE_GENERATION_STARTED\n');
-        
-        const result = await model.generateContent([{
-            text: lastUserMessage.content
-        }]);
-
-        const response = await result.response;
-        const candidates = response.candidates;
-
-        if (candidates && candidates[0] && candidates[0].content && candidates[0].content.parts) {
-            for (const part of candidates[0].content.parts) {
-                if (part.inlineData && part.inlineData.data) {
-                    // إرسال البيانات المتدرجة للصورة
-                    const imageData = part.inlineData.data;
-                    const mimeType = part.inlineData.mimeType || 'image/jpeg';
-                    
-                    res.write(`IMAGE_DATA_START:${mimeType}\n`);
-                    res.write(`${imageData}\n`);
-                    res.write('IMAGE_DATA_END\n');
-                } else if (part.text) {
-                    res.write(part.text);
-                }
-            }
-        }
-        
-        res.write('IMAGE_GENERATION_COMPLETED\n');
-        res.end();
-        
-    } catch (error) {
-        console.error('Image generation error:', error);
-        res.write(`IMAGE_GENERATION_ERROR:${error.message}\n`);
-        res.end();
-    }
 }
 
 
