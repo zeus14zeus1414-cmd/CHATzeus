@@ -33,6 +33,7 @@ const mongoose = require('mongoose');
 const User = require('./models/user.model.js');
 const Chat = require('./models/chat.model.js');
 const Settings = require('./models/settings.model.js');
+const Glossary = require('./models/glossary.model.js');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
@@ -367,6 +368,102 @@ app.get('/api/chats/:chatId', verifyToken, async (req, res) => {
     } catch (error) {
         console.error('خطأ في جلب تفاصيل المحادثة:', error);
         res.status(500).json({ message: 'فشل في جلب تفاصيل المحادثة', error: error.message });
+    }
+});
+
+// =================================================================
+// ✨ نقاط نهاية إدارة المسرد (Glossary) ✨
+// =================================================================
+
+// 1. جلب المسرد بالكامل للمستخدم
+app.get('/api/glossary', verifyToken, async (req, res) => {
+    try {
+        const terms = await Glossary.find({ user: req.user.id });
+        
+        // تحويل البيانات للهيكل الذي تستخدمه الواجهة الأمامية
+        const glossaryData = {
+            manual_terms: {},
+            extracted_terms: {}
+        };
+
+        terms.forEach(term => {
+            if (term.type === 'manual') {
+                glossaryData.manual_terms[term.key] = term.value;
+            } else {
+                glossaryData.extracted_terms[term.key] = term.value;
+            }
+        });
+
+        res.json(glossaryData);
+    } catch (error) {
+        console.error('Error fetching glossary:', error);
+        res.status(500).json({ message: 'فشل جلب المسرد', error: error.message });
+    }
+});
+
+// 2. حفظ أو تحديث المصطلحات (يدعم الدفعات لتقليل الطلبات)
+app.post('/api/glossary', verifyToken, async (req, res) => {
+    try {
+        const { manual_terms, extracted_terms } = req.body;
+        const userId = req.user.id;
+
+        const operations = [];
+
+        // تجهيز المصطلحات اليدوية (تحديث أو إضافة)
+        if (manual_terms) {
+            Object.entries(manual_terms).forEach(([key, value]) => {
+                operations.push({
+                    updateOne: {
+                        filter: { user: userId, key: key },
+                        update: { $set: { value: value, type: 'manual' } },
+                        upsert: true
+                    }
+                });
+            });
+        }
+
+        // تجهيز المصطلحات المستخرجة (تضاف فقط إذا لم تكن موجودة يدوياً)
+        if (extracted_terms) {
+            Object.entries(extracted_terms).forEach(([key, value]) => {
+                operations.push({
+                    updateOne: {
+                        filter: { user: userId, key: key, type: { $ne: 'manual' } }, // لا تستبدل اليدوي
+                        update: { $set: { value: value, type: 'extracted' } },
+                        upsert: true
+                    }
+                });
+            });
+        }
+
+        if (operations.length > 0) {
+            await Glossary.bulkWrite(operations);
+        }
+
+        res.json({ message: 'تم حفظ المسرد بنجاح' });
+    } catch (error) {
+        console.error('Glossary save error:', error);
+        res.status(500).json({ message: 'فشل حفظ المسرد', error: error.message });
+    }
+});
+
+// 3. حذف مصطلحات محددة
+app.delete('/api/glossary', verifyToken, async (req, res) => {
+    try {
+        const { keys } = req.body; // نتوقع مصفوفة بالمفاتيح [key1, key2]
+        
+        if (!Array.isArray(keys)) {
+            return res.status(400).json({ message: 'يجب إرسال مصفوفة بالمفاتيح المراد حذفها' });
+        }
+
+        await Glossary.deleteMany({ 
+            user: req.user.id, 
+            key: { $in: keys } 
+        });
+        
+        res.json({ message: 'تم حذف المصطلحات بنجاح' });
+    } catch (error) {
+        console.error('Glossary delete error:', error);
+        res.status(500).json({ message: 'فشل حذف المصطلحات', error: error.message });
     }
 });
 
