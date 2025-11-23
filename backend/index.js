@@ -536,20 +536,37 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
+// =================================================================
+// 🗺️ خريطة الروابط الأمامية (للتحكم في التوجيه)
+// =================================================================
+const FRONTEND_URLS = {
+    'chat': 'https://chatzeus.vercel.app',
+    'tranzeus': 'https://tranzeus.vercel.app'
+};
+
 app.get('/auth/google', (req, res) => {
+    // 1. استقبال اسم التطبيق من الرابط (مثل: ?from=tranzeus)
+    const fromApp = req.query.from || 'chat'; 
+
     const authorizeUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
-    } );
+        // 2. تمرير المصدر في الـ state ليعود إلينا لاحقاً من جوجل
+        state: fromApp 
+    });
     res.redirect(authorizeUrl);
 });
 
 app.get('/auth/google/callback', async (req, res) => {
+    // 3. استلام المصدر من جوجل لتحديد وجهة العودة
+    const fromApp = req.query.state || 'chat';
+    const targetFrontend = FRONTEND_URLS[fromApp] || FRONTEND_URLS['chat'];
+
     try {
         const { code } = req.query;
         const { tokens } = await oauth2Client.getToken(code);
         oauth2Client.setCredentials(tokens);
-        const userInfoResponse = await oauth2Client.request({ url: 'https://www.googleapis.com/oauth2/v3/userinfo' } );
+        const userInfoResponse = await oauth2Client.request({ url: 'https://www.googleapis.com/oauth2/v3/userinfo' });
         const userInfo = userInfoResponse.data;
 
         // ابحث عن المستخدم في قاعدة البيانات أو أنشئ مستخدمًا جديدًا
@@ -585,12 +602,14 @@ app.get('/auth/google/callback', async (req, res) => {
         // توقيع التوكن
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
 
-        // إعادة التوجيه إلى الواجهة الأمامية مع التوكن
-        res.redirect(`https://chatzeus.vercel.app/?token=${token}` );
+        // 4. إعادة التوجيه إلى الواجهة الأمامية الصحيحة (الديناميكية)
+        console.log(`Redirecting to: ${targetFrontend}`);
+        res.redirect(`${targetFrontend}/?token=${token}`);
 
     } catch (error) {
         console.error('Authentication callback error:', error);
-        res.redirect('https://chatzeus.vercel.app/?auth_error=true' );
+        // في حال الخطأ، نعود أيضاً للموقع الصحيح
+        res.redirect(`${targetFrontend}/?auth_error=true`);
     }
 });
 
