@@ -33,7 +33,6 @@ const mongoose = require('mongoose');
 const User = require('./models/user.model.js');
 const Chat = require('./models/chat.model.js');
 const Settings = require('./models/settings.model.js');
-const Glossary = require('./models/glossary.model.js');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
@@ -372,102 +371,6 @@ app.get('/api/chats/:chatId', verifyToken, async (req, res) => {
 });
 
 // =================================================================
-// ✨ نقاط نهاية إدارة المسرد (Glossary) ✨
-// =================================================================
-
-// 1. جلب المسرد بالكامل للمستخدم
-app.get('/api/glossary', verifyToken, async (req, res) => {
-    try {
-        const terms = await Glossary.find({ user: req.user.id });
-        
-        // تحويل البيانات للهيكل الذي تستخدمه الواجهة الأمامية
-        const glossaryData = {
-            manual_terms: {},
-            extracted_terms: {}
-        };
-
-        terms.forEach(term => {
-            if (term.type === 'manual') {
-                glossaryData.manual_terms[term.key] = term.value;
-            } else {
-                glossaryData.extracted_terms[term.key] = term.value;
-            }
-        });
-
-        res.json(glossaryData);
-    } catch (error) {
-        console.error('Error fetching glossary:', error);
-        res.status(500).json({ message: 'فشل جلب المسرد', error: error.message });
-    }
-});
-
-// 2. حفظ أو تحديث المصطلحات (يدعم الدفعات لتقليل الطلبات)
-app.post('/api/glossary', verifyToken, async (req, res) => {
-    try {
-        const { manual_terms, extracted_terms } = req.body;
-        const userId = req.user.id;
-
-        const operations = [];
-
-        // تجهيز المصطلحات اليدوية (تحديث أو إضافة)
-        if (manual_terms) {
-            Object.entries(manual_terms).forEach(([key, value]) => {
-                operations.push({
-                    updateOne: {
-                        filter: { user: userId, key: key },
-                        update: { $set: { value: value, type: 'manual' } },
-                        upsert: true
-                    }
-                });
-            });
-        }
-
-        // تجهيز المصطلحات المستخرجة (تضاف فقط إذا لم تكن موجودة يدوياً)
-        if (extracted_terms) {
-            Object.entries(extracted_terms).forEach(([key, value]) => {
-                operations.push({
-                    updateOne: {
-                        filter: { user: userId, key: key, type: { $ne: 'manual' } }, // لا تستبدل اليدوي
-                        update: { $set: { value: value, type: 'extracted' } },
-                        upsert: true
-                    }
-                });
-            });
-        }
-
-        if (operations.length > 0) {
-            await Glossary.bulkWrite(operations);
-        }
-
-        res.json({ message: 'تم حفظ المسرد بنجاح' });
-    } catch (error) {
-        console.error('Glossary save error:', error);
-        res.status(500).json({ message: 'فشل حفظ المسرد', error: error.message });
-    }
-});
-
-// 3. حذف مصطلحات محددة
-app.delete('/api/glossary', verifyToken, async (req, res) => {
-    try {
-        const { keys } = req.body; // نتوقع مصفوفة بالمفاتيح [key1, key2]
-        
-        if (!Array.isArray(keys)) {
-            return res.status(400).json({ message: 'يجب إرسال مصفوفة بالمفاتيح المراد حذفها' });
-        }
-
-        await Glossary.deleteMany({ 
-            user: req.user.id, 
-            key: { $in: keys } 
-        });
-        
-        res.json({ message: 'تم حذف المصطلحات بنجاح' });
-    } catch (error) {
-        console.error('Glossary delete error:', error);
-        res.status(500).json({ message: 'فشل حذف المصطلحات', error: error.message });
-    }
-});
-
-// =================================================================
 // مسار رفع الملفات (يرجع معلومات يمكن حفظها داخل الرسالة فقط)
 // =================================================================
 app.post('/api/uploads', verifyToken, upload.array('files', 10), async (req, res) => {
@@ -536,37 +439,20 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// =================================================================
-// 🗺️ خريطة الروابط الأمامية (للتحكم في التوجيه)
-// =================================================================
-const FRONTEND_URLS = {
-    'chat': 'https://chatzeus.vercel.app',
-    'tranzeus': 'https://tranzeus.vercel.app'
-};
-
 app.get('/auth/google', (req, res) => {
-    // 1. استقبال اسم التطبيق من الرابط (مثل: ?from=tranzeus)
-    const fromApp = req.query.from || 'chat'; 
-
     const authorizeUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
-        // 2. تمرير المصدر في الـ state ليعود إلينا لاحقاً من جوجل
-        state: fromApp 
-    });
+    } );
     res.redirect(authorizeUrl);
 });
 
 app.get('/auth/google/callback', async (req, res) => {
-    // 3. استلام المصدر من جوجل لتحديد وجهة العودة
-    const fromApp = req.query.state || 'chat';
-    const targetFrontend = FRONTEND_URLS[fromApp] || FRONTEND_URLS['chat'];
-
     try {
         const { code } = req.query;
         const { tokens } = await oauth2Client.getToken(code);
         oauth2Client.setCredentials(tokens);
-        const userInfoResponse = await oauth2Client.request({ url: 'https://www.googleapis.com/oauth2/v3/userinfo' });
+        const userInfoResponse = await oauth2Client.request({ url: 'https://www.googleapis.com/oauth2/v3/userinfo' } );
         const userInfo = userInfoResponse.data;
 
         // ابحث عن المستخدم في قاعدة البيانات أو أنشئ مستخدمًا جديدًا
@@ -602,14 +488,12 @@ app.get('/auth/google/callback', async (req, res) => {
         // توقيع التوكن
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
 
-        // 4. إعادة التوجيه إلى الواجهة الأمامية الصحيحة (الديناميكية)
-        console.log(`Redirecting to: ${targetFrontend}`);
-        res.redirect(`${targetFrontend}/?token=${token}`);
+        // إعادة التوجيه إلى الواجهة الأمامية مع التوكن
+        res.redirect(`https://chatzeus.vercel.app/?token=${token}` );
 
     } catch (error) {
         console.error('Authentication callback error:', error);
-        // في حال الخطأ، نعود أيضاً للموقع الصحيح
-        res.redirect(`${targetFrontend}/?auth_error=true`);
+        res.redirect('https://chatzeus.vercel.app/?auth_error=true' );
     }
 });
 
