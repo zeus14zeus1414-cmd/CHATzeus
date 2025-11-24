@@ -33,6 +33,8 @@ const mongoose = require('mongoose');
 const User = require('./models/user.model.js');
 const Chat = require('./models/chat.model.js');
 const Settings = require('./models/settings.model.js');
+const Glossary = require('./models/glossary.model.js'); // ✨ تأكد من وجود هذا
+const TranslationChapter = require('./models/translationChapter.model.js'); // ✨ النموذج الجديد
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
@@ -47,9 +49,11 @@ const server = http.createServer(app  );
 
 // ✨ قائمة النطاقات المسموح بها للاتصال بالخادم ✨
 const allowedOrigins = [
-    'https://chatzeus.vercel.app',    // 1. واجهة المستخدم الرئيسية
-    'https://dashporddd.vercel.app'   // 2. لوحة التحكم الجديدة
-    // يمكنك إضافة أي نطاقات أخرى هنا في المستقبل
+    'https://chatzeus.vercel.app',
+    'https://dashporddd.vercel.app',
+    'https://tranzeus.vercel.app', // ✨ تمت إضافة نطاق المترجم الجديد
+    'http://localhost:5500',       // للاختبار المحلي إذا احتجت
+    'http://127.0.0.1:5500'
 ];
 
 // ✨ إعدادات CORS النهائية والمحصّنة (تستخدم القائمة أعلاه ) ✨
@@ -488,8 +492,20 @@ app.get('/auth/google/callback', async (req, res) => {
         // توقيع التوكن
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
 
-        // إعادة التوجيه إلى الواجهة الأمامية مع التوكن
-        res.redirect(`https://chatzeus.vercel.app/?token=${token}` );
+        // إعادة التوجيه إلى الواجهة الأمامية مع التوكن// إعادة التوجيه إلى الواجهة الأمامية مع التوكن
+        // 💡 ملاحظة: في الوضع المثالي نستخدم state لتحديد الوجهة، هنا سنفترض التوجيه الافتراضي
+        // يمكنك تغيير هذا الرابط يدوياً أو جعله ديناميكياً لاحقاً
+        // سنقوم بإرسال التوكن لصفحة وسيطة أو للموقع الرئيسي الذي يتعامل معه المستخدم
+        
+        // ✨ الحل المقترح: التحقق من الكوكيز أو الـ state، ولكن للآن سنوحده
+        // إذا كنت تريد الدخول من tranzeus، يجب أن تغير الرابط هنا أو تجعله ديناميكياً
+        // سأضع كوداً بسيطاً يتحقق من الـ state إذا كان مدعوماً، أو يستخدم الرابط الافتراضي
+        
+        const redirectBase = req.query.state === 'tranzeus' 
+            ? 'https://tranzeus.vercel.app' 
+            : 'https://chatzeus.vercel.app';
+
+        res.redirect(`${redirectBase}/?token=${token}`);
 
     } catch (error) {
         console.error('Authentication callback error:', error);
@@ -1625,7 +1641,113 @@ app.get('/api/system/health', verifyToken, async (req, res) => {
 });
 
 
+// =================================================================
+// ✨ نقاط نهاية مزامنة المترجم (ZEUS Translator Sync) ✨
+// =================================================================
 
+// 1. مزامنة الفصول (حفظ وجلب)
+app.post('/api/sync/chapters', verifyToken, async (req, res) => {
+    try {
+        const { chapters } = req.body; // مصفوفة من الفصول
+        const userId = req.user.id;
+
+        if (!chapters || !Array.isArray(chapters)) {
+            return res.status(400).json({ message: 'Invalid data format' });
+        }
+
+        const updates = chapters.map(async (chapter) => {
+            return TranslationChapter.findOneAndUpdate(
+                { user: userId, fileName: chapter.fileName },
+                { 
+                    content: chapter.content,
+                    translatedContent: chapter.translatedContent || "",
+                    lastModified: chapter.modified || Date.now()
+                },
+                { upsert: true, new: true }
+            );
+        });
+
+        await Promise.all(updates);
+        res.json({ message: 'Chapters synced successfully' });
+    } catch (error) {
+        console.error('Sync Chapters Error:', error);
+        res.status(500).json({ message: 'Failed to sync chapters' });
+    }
+});
+
+app.get('/api/sync/chapters', verifyToken, async (req, res) => {
+    try {
+        const chapters = await TranslationChapter.find({ user: req.user.id });
+        // تحويل البيانات لتناسب هيكل LocalStorage في الواجهة
+        const formattedChapters = {};
+        chapters.forEach(ch => {
+            // هنا نقرر: هل نعيد النص الإنجليزي أم المترجم؟
+            // الواجهة تفصلهم، لذا سنعيدهم ككائنات
+            formattedChapters[ch.fileName] = {
+                content: ch.content,
+                translatedContent: ch.translatedContent,
+                modified: ch.lastModified
+            };
+        });
+        res.json(formattedChapters);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to fetch chapters' });
+    }
+});
+
+// 2. مزامنة المسرد
+app.post('/api/sync/glossary', verifyToken, async (req, res) => {
+    try {
+        const { manual_terms, extracted_terms } = req.body;
+        const userId = req.user.id;
+
+        // حذف القديم واستبداله (أو الدمج - الاستبدال أسهل لتجنب التعارض حالياً)
+        // لكن الأفضل هو التحديث. هنا سنقوم بحفظ المصطلحات.
+        
+        // سنقوم بمسح مصطلحات المستخدم وإعادة إدخالها (طريقة بسيطة للمزامنة الكاملة)
+        // في الإنتاج الضخم يفضل الـ upsert لكل عنصر
+        await Glossary.deleteMany({ user: userId });
+
+        const glossaryDocs = [];
+        
+        if (manual_terms) {
+            Object.entries(manual_terms).forEach(([key, value]) => {
+                glossaryDocs.push({ user: userId, key, value, type: 'manual' });
+            });
+        }
+        
+        if (extracted_terms) {
+            Object.entries(extracted_terms).forEach(([key, value]) => {
+                glossaryDocs.push({ user: userId, key, value, type: 'extracted' });
+            });
+        }
+
+        if (glossaryDocs.length > 0) {
+            await Glossary.insertMany(glossaryDocs);
+        }
+
+        res.json({ message: 'Glossary synced successfully' });
+    } catch (error) {
+        console.error('Sync Glossary Error:', error);
+        res.status(500).json({ message: 'Failed to sync glossary' });
+    }
+});
+
+app.get('/api/sync/glossary', verifyToken, async (req, res) => {
+    try {
+        const terms = await Glossary.find({ user: req.user.id });
+        const glossary = { manual_terms: {}, extracted_terms: {} };
+        
+        terms.forEach(term => {
+            if (term.type === 'manual') glossary.manual_terms[term.key] = term.value;
+            else glossary.extracted_terms[term.key] = term.value;
+        });
+        
+        res.json(glossary);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to fetch glossary' });
+    }
+});
 
 
 // =================================================================
