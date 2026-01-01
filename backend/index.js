@@ -82,129 +82,98 @@ app.use(async (req, res, next) => {
 });
 
 // ---------------------------------------------------------
-// 📚 Seeding Data (20 Real Novels)
+// 📚 Seeding Data (20 Real Novels with Logic)
 // ---------------------------------------------------------
 const seedDataIfEmpty = async () => {
     try {
         const count = await Novel.countDocuments();
-        if (count === 0) {
-            console.log("Seeding 20 novels...");
+        
+        // إذا كان العدد قليل (بيانات قديمة)، نحذف ونعيد الملء لضمان التجربة
+        if (count < 10) {
+            console.log("Cleaning old data and seeding 20 diverse novels...");
+            await Novel.deleteMany({}); // تنظيف القديم
             
             const categories = ['شيانشيا', 'شوانهوان', 'وشيا', 'رعب', 'نظام', 'خيال علمي'];
             const generateChapters = (count) => Array.from({length: count}, (_, i) => ({
                 number: i + 1,
-                title: `الفصل ${i + 1}: ${['البداية', 'الصحوة', 'المعركة', 'الخيانة', 'النهاية'][i % 5]}`,
-                content: `هذا نص تجريبي للفصل ${i + 1}. في عالم تحكمه القوة، وقف البطل أمام خصمه وقال: "لن أستسلم!". اشتعلت المعركة وتطايرت الشرارة... (يمكن استبدال هذا بنص طويل لاحقاً).`,
-                createdAt: new Date(Date.now() - (count - i) * 86400000) // تواريخ متدرجة
+                title: `الفصل ${i + 1}`,
+                content: `هذا نص تجريبي للفصل ${i + 1}. في عالم تحكمه القوة...`,
+                createdAt: new Date(Date.now() - (count - i) * 86400000)
             }));
 
+            // 1. Top 3 All Time (High Views, Low Daily/Weekly - Old Classics)
+            // 2. Trending Now (High Daily/Weekly, Mid Total Views)
+            // 3. Just Added (Low Views, High Recency)
+
             const novelsList = [
+                // --- Top 3 All Time Kings ---
                 {
                     title: 'إمبراطور السيوف الإلهية',
                     author: 'تانغ جيا',
                     cover: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400&h=600&fit=crop',
-                    description: 'في عالم تحكمه فنون القتال، يسعى بطلنا لإتقان سيف السماوات.',
+                    description: 'الملك المطلق للروايات.',
                     category: 'شيانشيا',
-                    views: 150000, dailyViews: 500, weeklyViews: 3000, monthlyViews: 12000,
-                    isTrending: true, rating: 4.9, chapters: generateChapters(50)
+                    views: 5000000, dailyViews: 1000, weeklyViews: 5000, monthlyViews: 20000,
+                    chapters: generateChapters(100)
                 },
                 {
                     title: 'سيد الفوضى',
                     author: 'آي ير',
                     cover: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=600&fit=crop',
-                    description: 'عاد من الموت لينتقم ممن خانوه.',
+                    description: 'المركز الثاني تاريخياً.',
                     category: 'شوانهوان',
-                    views: 98000, dailyViews: 300, weeklyViews: 2000, monthlyViews: 8000,
-                    isTrending: true, rating: 4.7, chapters: generateChapters(30)
+                    views: 4500000, dailyViews: 800, weeklyViews: 4000, monthlyViews: 18000,
+                    chapters: generateChapters(80)
                 },
                 {
                     title: 'ظل النينجا الأخير',
                     author: 'ماساشي',
                     cover: 'https://images.unsplash.com/photo-1514539079130-25950c84af65?w=400&h=600&fit=crop',
-                    description: 'في عصر التكنولوجيا، يحاول آخر نينجا حماية تقاليده.',
+                    description: 'المركز الثالث تاريخياً.',
                     category: 'أكشن',
-                    views: 45000, dailyViews: 100, weeklyViews: 700, monthlyViews: 2500,
-                    rating: 4.5, chapters: generateChapters(20)
+                    views: 3000000, dailyViews: 500, weeklyViews: 3000, monthlyViews: 15000,
+                    chapters: generateChapters(60)
                 },
-                {
-                    title: 'مكتبة الأرواح',
-                    author: 'سارة ج.',
-                    cover: 'https://images.unsplash.com/photo-1507842217121-9d59754baebc?w=400&h=600&fit=crop',
-                    description: 'مكتبة غامضة تحتوي على كتب تحكي قصص الموتى.',
-                    category: 'رعب',
-                    views: 32000, dailyViews: 80, weeklyViews: 500, monthlyViews: 1800,
-                    rating: 4.6, chapters: generateChapters(15)
-                },
+
+                // --- Trending Today (Viral) ---
                 {
                     title: 'نظام المستوى الفائق',
                     author: 'لي تشاو',
                     cover: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=400&h=600&fit=crop',
-                    description: 'طالب فاشل يحصل على نظام يجعله عبقرياً في كل شيء.',
+                    description: 'تريند اليوم! مشاهدات يومية عالية.',
                     category: 'نظام',
-                    views: 210000, dailyViews: 1200, weeklyViews: 8000, monthlyViews: 30000,
-                    isTrending: true, rating: 4.8, chapters: generateChapters(100)
+                    views: 50000, dailyViews: 5000, weeklyViews: 15000, monthlyViews: 30000, // Viral Today
+                    chapters: generateChapters(20)
                 },
                 {
                     title: 'أميرة الجليد والنار',
                     author: 'جورج م.',
                     cover: 'https://images.unsplash.com/photo-1518806118471-f28b20a1d79d?w=400&h=600&fit=crop',
-                    description: 'صراع بين ممالك الجليد والنار من أجل العرش.',
+                    description: 'تريند الأسبوع.',
                     category: 'فانتازيا',
-                    views: 89000, dailyViews: 200, weeklyViews: 1500, monthlyViews: 6000,
-                    rating: 4.7, chapters: generateChapters(40)
+                    views: 100000, dailyViews: 200, weeklyViews: 8000, monthlyViews: 20000, // Viral Week
+                    chapters: generateChapters(30)
                 },
-                {
-                    title: 'الخيميائي المفقود',
-                    author: 'باولو',
-                    cover: 'https://images.unsplash.com/photo-1515536765-9b2a740fa331?w=400&h=600&fit=crop',
-                    description: 'رحلة البحث عن حجر الفلاسفة والخلود.',
-                    category: 'فانتازيا',
-                    views: 12000, dailyViews: 20, weeklyViews: 100, monthlyViews: 400,
-                    rating: 4.2, chapters: generateChapters(10)
-                },
-                {
-                    title: 'غزو الفضاء',
-                    author: 'إسحاق',
-                    cover: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=600&fit=crop',
-                    description: 'حرب بين البشر وكائنات فضائية متطورة.',
-                    category: 'خيال علمي',
-                    views: 67000, dailyViews: 150, weeklyViews: 900, monthlyViews: 3500,
-                    rating: 4.4, chapters: generateChapters(25)
-                },
-                {
-                    title: 'مصاص الدماء الأخير',
-                    author: 'آن رايس',
-                    cover: 'https://images.unsplash.com/photo-1614853316476-de00d14cb1fc?w=400&h=600&fit=crop',
-                    description: 'قصة حب وحرب في عالم مصاصي الدماء.',
-                    category: 'رعب',
-                    views: 150000, dailyViews: 400, weeklyViews: 2500, monthlyViews: 10000,
-                    rating: 4.8, chapters: generateChapters(60)
-                },
-                {
-                    title: 'التنين الأزرق',
-                    author: 'إيراغون',
-                    cover: 'https://images.unsplash.com/photo-1577493340887-b7bfff550145?w=400&h=600&fit=crop',
-                    description: 'فتى قروي يجد بيضة تنين وتتغير حياته.',
-                    category: 'فانتازيا',
-                    views: 40000, dailyViews: 90, weeklyViews: 600, monthlyViews: 2000,
-                    rating: 4.3, chapters: generateChapters(18)
-                },
-                // إضافة 10 روايات أخرى لتكملة العدد 20
-                ...Array.from({length: 10}, (_, i) => ({
-                    title: `الرواية الإضافية ${i + 1}`,
+
+                // --- More Novels to fill up to 20 ---
+                ...Array.from({length: 15}, (_, i) => ({
+                    title: `الرواية رقم ${i + 6}`,
                     author: `مؤلف ${i + 1}`,
-                    cover: `https://images.unsplash.com/photo-${1500000000000 + i}?w=400&h=600&fit=crop`, // صور عشوائية
-                    description: `وصف تجريبي للرواية رقم ${i + 11}`,
+                    cover: `https://images.unsplash.com/photo-${1510000000000 + (i * 12345)}?w=400&h=600&fit=crop`,
+                    description: `وصف لرواية ${i + 6}`,
                     category: categories[i % categories.length],
-                    views: Math.floor(Math.random() * 50000),
-                    dailyViews: Math.floor(Math.random() * 500),
+                    views: Math.floor(Math.random() * 20000),
+                    dailyViews: Math.floor(Math.random() * 300),
+                    weeklyViews: Math.floor(Math.random() * 1000),
+                    monthlyViews: Math.floor(Math.random() * 5000),
                     rating: (3 + Math.random() * 2).toFixed(1),
-                    chapters: generateChapters(5 + i)
+                    chapters: generateChapters(10 + i),
+                    lastChapterUpdate: new Date(Date.now() - Math.floor(Math.random() * 100000000))
                 }))
             ];
 
             await Novel.insertMany(novelsList);
-            console.log("✅ Seeded 20 novels successfully");
+            console.log("✅ Seeded 20 novels successfully with logic.");
         }
     } catch (e) {
         console.error("Seeding error:", e);
@@ -217,7 +186,7 @@ app.post('/api/seed', async (req, res) => {
 });
 
 // ---------------------------------------------------------
-// 🔍 Novel APIs (Updated Logic)
+// 🔍 Novel APIs
 // ---------------------------------------------------------
 
 app.post('/api/novels/:id/view', async (req, res) => {
@@ -248,13 +217,15 @@ app.get('/api/novels', async (req, res) => {
         if (category && category !== 'all') query.category = category;
 
         if (filter === 'featured') {
+            // المميز: أعلى 3 روايات قراءة على الإطلاق (All Time)
             sort = { views: -1 };
             limit = 3;
         } else if (filter === 'trending') {
+            // الأكثر قراءة حسب الفلتر الزمني
             if (timeRange === 'day') sort = { dailyViews: -1 };
             else if (timeRange === 'week') sort = { weeklyViews: -1 };
             else if (timeRange === 'month') sort = { monthlyViews: -1 };
-            else sort = { views: -1 };
+            else sort = { views: -1 }; 
             limit = 10;
         } else if (filter === 'latest_updates') {
             sort = { lastChapterUpdate: -1 };
@@ -271,7 +242,6 @@ app.get('/api/novels', async (req, res) => {
         if (filter === 'latest_updates') {
             const result = novels.map(novel => {
                 const n = novel.toObject();
-                // Get latest 3 chapters
                 n.recentChapters = n.chapters
                     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
                     .slice(0, 3)
@@ -304,7 +274,6 @@ app.get('/api/novels/:id', async (req, res) => {
         if (!novel) return res.status(404).json({ message: 'Novel not found' });
         
         const result = novel.toObject();
-        // Return full chapters for detail to know count and titles
         result.chapters = result.chapters.map(c => ({
             _id: c._id,
             number: c.number,
@@ -459,7 +428,6 @@ app.get('/auth/google/callback', async (req, res) => {
         const payload = { id: user._id, googleId: user.googleId, name: user.name, email: user.email };
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '365d' });
 
-        // Try seeding on login
         seedDataIfEmpty();
 
         if (state && state.startsWith('exp://')) {
