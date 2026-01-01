@@ -82,10 +82,144 @@ app.use(async (req, res, next) => {
 });
 
 // ---------------------------------------------------------
+// 📚 Seeding Data (20 Real Novels)
+// ---------------------------------------------------------
+const seedDataIfEmpty = async () => {
+    try {
+        const count = await Novel.countDocuments();
+        if (count === 0) {
+            console.log("Seeding 20 novels...");
+            
+            const categories = ['شيانشيا', 'شوانهوان', 'وشيا', 'رعب', 'نظام', 'خيال علمي'];
+            const generateChapters = (count) => Array.from({length: count}, (_, i) => ({
+                number: i + 1,
+                title: `الفصل ${i + 1}: ${['البداية', 'الصحوة', 'المعركة', 'الخيانة', 'النهاية'][i % 5]}`,
+                content: `هذا نص تجريبي للفصل ${i + 1}. في عالم تحكمه القوة، وقف البطل أمام خصمه وقال: "لن أستسلم!". اشتعلت المعركة وتطايرت الشرارة... (يمكن استبدال هذا بنص طويل لاحقاً).`,
+                createdAt: new Date(Date.now() - (count - i) * 86400000) // تواريخ متدرجة
+            }));
+
+            const novelsList = [
+                {
+                    title: 'إمبراطور السيوف الإلهية',
+                    author: 'تانغ جيا',
+                    cover: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400&h=600&fit=crop',
+                    description: 'في عالم تحكمه فنون القتال، يسعى بطلنا لإتقان سيف السماوات.',
+                    category: 'شيانشيا',
+                    views: 150000, dailyViews: 500, weeklyViews: 3000, monthlyViews: 12000,
+                    isTrending: true, rating: 4.9, chapters: generateChapters(50)
+                },
+                {
+                    title: 'سيد الفوضى',
+                    author: 'آي ير',
+                    cover: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=600&fit=crop',
+                    description: 'عاد من الموت لينتقم ممن خانوه.',
+                    category: 'شوانهوان',
+                    views: 98000, dailyViews: 300, weeklyViews: 2000, monthlyViews: 8000,
+                    isTrending: true, rating: 4.7, chapters: generateChapters(30)
+                },
+                {
+                    title: 'ظل النينجا الأخير',
+                    author: 'ماساشي',
+                    cover: 'https://images.unsplash.com/photo-1514539079130-25950c84af65?w=400&h=600&fit=crop',
+                    description: 'في عصر التكنولوجيا، يحاول آخر نينجا حماية تقاليده.',
+                    category: 'أكشن',
+                    views: 45000, dailyViews: 100, weeklyViews: 700, monthlyViews: 2500,
+                    rating: 4.5, chapters: generateChapters(20)
+                },
+                {
+                    title: 'مكتبة الأرواح',
+                    author: 'سارة ج.',
+                    cover: 'https://images.unsplash.com/photo-1507842217121-9d59754baebc?w=400&h=600&fit=crop',
+                    description: 'مكتبة غامضة تحتوي على كتب تحكي قصص الموتى.',
+                    category: 'رعب',
+                    views: 32000, dailyViews: 80, weeklyViews: 500, monthlyViews: 1800,
+                    rating: 4.6, chapters: generateChapters(15)
+                },
+                {
+                    title: 'نظام المستوى الفائق',
+                    author: 'لي تشاو',
+                    cover: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=400&h=600&fit=crop',
+                    description: 'طالب فاشل يحصل على نظام يجعله عبقرياً في كل شيء.',
+                    category: 'نظام',
+                    views: 210000, dailyViews: 1200, weeklyViews: 8000, monthlyViews: 30000,
+                    isTrending: true, rating: 4.8, chapters: generateChapters(100)
+                },
+                {
+                    title: 'أميرة الجليد والنار',
+                    author: 'جورج م.',
+                    cover: 'https://images.unsplash.com/photo-1518806118471-f28b20a1d79d?w=400&h=600&fit=crop',
+                    description: 'صراع بين ممالك الجليد والنار من أجل العرش.',
+                    category: 'فانتازيا',
+                    views: 89000, dailyViews: 200, weeklyViews: 1500, monthlyViews: 6000,
+                    rating: 4.7, chapters: generateChapters(40)
+                },
+                {
+                    title: 'الخيميائي المفقود',
+                    author: 'باولو',
+                    cover: 'https://images.unsplash.com/photo-1515536765-9b2a740fa331?w=400&h=600&fit=crop',
+                    description: 'رحلة البحث عن حجر الفلاسفة والخلود.',
+                    category: 'فانتازيا',
+                    views: 12000, dailyViews: 20, weeklyViews: 100, monthlyViews: 400,
+                    rating: 4.2, chapters: generateChapters(10)
+                },
+                {
+                    title: 'غزو الفضاء',
+                    author: 'إسحاق',
+                    cover: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=600&fit=crop',
+                    description: 'حرب بين البشر وكائنات فضائية متطورة.',
+                    category: 'خيال علمي',
+                    views: 67000, dailyViews: 150, weeklyViews: 900, monthlyViews: 3500,
+                    rating: 4.4, chapters: generateChapters(25)
+                },
+                {
+                    title: 'مصاص الدماء الأخير',
+                    author: 'آن رايس',
+                    cover: 'https://images.unsplash.com/photo-1614853316476-de00d14cb1fc?w=400&h=600&fit=crop',
+                    description: 'قصة حب وحرب في عالم مصاصي الدماء.',
+                    category: 'رعب',
+                    views: 150000, dailyViews: 400, weeklyViews: 2500, monthlyViews: 10000,
+                    rating: 4.8, chapters: generateChapters(60)
+                },
+                {
+                    title: 'التنين الأزرق',
+                    author: 'إيراغون',
+                    cover: 'https://images.unsplash.com/photo-1577493340887-b7bfff550145?w=400&h=600&fit=crop',
+                    description: 'فتى قروي يجد بيضة تنين وتتغير حياته.',
+                    category: 'فانتازيا',
+                    views: 40000, dailyViews: 90, weeklyViews: 600, monthlyViews: 2000,
+                    rating: 4.3, chapters: generateChapters(18)
+                },
+                // إضافة 10 روايات أخرى لتكملة العدد 20
+                ...Array.from({length: 10}, (_, i) => ({
+                    title: `الرواية الإضافية ${i + 1}`,
+                    author: `مؤلف ${i + 1}`,
+                    cover: `https://images.unsplash.com/photo-${1500000000000 + i}?w=400&h=600&fit=crop`, // صور عشوائية
+                    description: `وصف تجريبي للرواية رقم ${i + 11}`,
+                    category: categories[i % categories.length],
+                    views: Math.floor(Math.random() * 50000),
+                    dailyViews: Math.floor(Math.random() * 500),
+                    rating: (3 + Math.random() * 2).toFixed(1),
+                    chapters: generateChapters(5 + i)
+                }))
+            ];
+
+            await Novel.insertMany(novelsList);
+            console.log("✅ Seeded 20 novels successfully");
+        }
+    } catch (e) {
+        console.error("Seeding error:", e);
+    }
+};
+
+app.post('/api/seed', async (req, res) => {
+    await seedDataIfEmpty();
+    res.json({ message: "Seeding check complete" });
+});
+
+// ---------------------------------------------------------
 // 🔍 Novel APIs (Updated Logic)
 // ---------------------------------------------------------
 
-// زيادة المشاهدات (يتم استدعاؤها عند فتح الرواية أو الفصل)
 app.post('/api/novels/:id/view', async (req, res) => {
     try {
         await Novel.findByIdAndUpdate(req.params.id, {
@@ -103,7 +237,6 @@ app.post('/api/novels/:id/view', async (req, res) => {
     }
 });
 
-// جلب الروايات مع الفلاتر الجديدة
 app.get('/api/novels', async (req, res) => {
     try {
         const { filter, search, category, timeRange } = req.query;
@@ -115,22 +248,18 @@ app.get('/api/novels', async (req, res) => {
         if (category && category !== 'all') query.category = category;
 
         if (filter === 'featured') {
-            // المميز: أعلى 3 روايات قراءة على الإطلاق
             sort = { views: -1 };
             limit = 3;
         } else if (filter === 'trending') {
-            // الأكثر قراءة حسب الوقت
             if (timeRange === 'day') sort = { dailyViews: -1 };
             else if (timeRange === 'week') sort = { weeklyViews: -1 };
             else if (timeRange === 'month') sort = { monthlyViews: -1 };
-            else sort = { views: -1 }; // Default all time
+            else sort = { views: -1 };
             limit = 10;
         } else if (filter === 'latest_updates') {
-            // آخر الفصول (روايات تم تحديثها مؤخراً)
             sort = { lastChapterUpdate: -1 };
             limit = 15;
         } else if (filter === 'latest_added') {
-            // أضيف حديثاً (روايات جديدة)
             sort = { createdAt: -1 };
             limit = 12;
         } else {
@@ -139,26 +268,23 @@ app.get('/api/novels', async (req, res) => {
 
         const novels = await Novel.find(query).sort(sort).limit(limit);
 
-        // إذا كان الفلتر هو "آخر الفصول"، نحتاج لإرسال معلومات آخر الفصول المضافة
         if (filter === 'latest_updates') {
             const result = novels.map(novel => {
                 const n = novel.toObject();
-                // ترتيب الفصول تنازلياً حسب التاريخ وإرجاع آخر 3
+                // Get latest 3 chapters
                 n.recentChapters = n.chapters
                     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
                     .slice(0, 3)
                     .map(c => ({ number: c.number, createdAt: c.createdAt }));
                 
-                // حساب عدد الفصول المتبقية
                 const remaining = Math.max(0, n.chapters.length - 3);
                 n.remainingChaptersCount = remaining;
-                delete n.chapters; // إزالة المحتوى الثقيل
+                delete n.chapters;
                 return n;
             });
             return res.json(result);
         }
 
-        // إزالة محتوى الفصول لتخفيف البيانات في القوائم العادية
         const result = novels.map(n => {
             const obj = n.toObject();
             obj.chaptersCount = obj.chapters ? obj.chapters.length : 0;
@@ -178,6 +304,7 @@ app.get('/api/novels/:id', async (req, res) => {
         if (!novel) return res.status(404).json({ message: 'Novel not found' });
         
         const result = novel.toObject();
+        // Return full chapters for detail to know count and titles
         result.chapters = result.chapters.map(c => ({
             _id: c._id,
             number: c.number,
@@ -207,20 +334,14 @@ app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
     }
 });
 
-// ---------------------------------------------------------
-// 👤 User Library APIs (Fixed Persistence)
-// ---------------------------------------------------------
-
-// هام: هذا الـ Endpoint يجب أن يستخدم upsert بشكل صحيح
+// Library APIs
 app.post('/api/novel/update', verifyToken, async (req, res) => {
     try {
         const { novelId, title, cover, author, isFavorite, progress, lastChapterId, lastChapterTitle } = req.body;
         
-        // البحث عن السجل الموجود
         let libraryItem = await NovelLibrary.findOne({ user: req.user.id, novelId });
 
         if (!libraryItem) {
-            // إنشاء جديد إذا لم يوجد
             libraryItem = new NovelLibrary({
                 user: req.user.id,
                 novelId,
@@ -233,7 +354,6 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
                 lastChapterTitle
             });
         } else {
-            // تحديث الموجود
             if (title) libraryItem.title = title;
             if (cover) libraryItem.cover = cover;
             if (author) libraryItem.author = author;
@@ -283,9 +403,7 @@ app.get('/api/novel/status/:novelId', verifyToken, async (req, res) => {
     }
 });
 
-// ---------------------------------------------------------
-// 🔐 Auth System
-// ---------------------------------------------------------
+// Auth
 const oauth2Client = new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
@@ -339,7 +457,10 @@ app.get('/auth/google/callback', async (req, res) => {
         }
 
         const payload = { id: user._id, googleId: user.googleId, name: user.name, email: user.email };
-        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '365d' }); // مدة طويلة لتجنب الخروج
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '365d' });
+
+        // Try seeding on login
+        seedDataIfEmpty();
 
         if (state && state.startsWith('exp://')) {
             const separator = state.includes('?') ? '&' : '?';
