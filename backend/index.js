@@ -42,6 +42,7 @@ const server = http.createServer(app);
 // إعدادات CORS
 const allowedOrigins = [
     'https://chatzeus.vercel.app',
+    'https://chatzeusb.vercel.app', // Added correct domain
     'https://dashporddd.vercel.app',
     'https://tranzeus.vercel.app',
     'http://localhost:5500',
@@ -96,6 +97,11 @@ function verifyToken(req, res, next) {
         next();
     });
 }
+
+// Root Route (Health Check)
+app.get('/', (req, res) => {
+    res.send('Server is running correctly. Use /auth/google to login.');
+});
 
 // ---------------------------------------------------------
 // 🚀 نقاط النهاية الخاصة بتطبيق الروايات (Novel App API)
@@ -163,24 +169,28 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
 // ---------------------------------------------------------
 
 app.get('/auth/google', (req, res) => {
-    // 1. استقبال رابط العودة من التطبيق (الموبايل يرسله، الويب لا يرسله)
+    // 1. استقبال رابط العودة من التطبيق
     const redirectUri = req.query.redirect_uri;
     
-    // 2. نخزن هذا الرابط في الـ state لنستعيده بعد عودة جوجل
-    // إذا لم يوجد رابط عودة، نعتبره 'web'
-    const state = redirectUri ? redirectUri : 'web';
+    // 2. نخزن هذا الرابط في الـ state
+    // إذا لم يصلنا رابط، نعتبره 'web'
+    const state = redirectUri && redirectUri !== 'undefined' ? redirectUri : 'web';
     
+    console.log('Login initiated with state:', state);
+
     const authorizeUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
-        state: state // نمرر الرابط كـ state
+        state: state 
     });
     res.redirect(authorizeUrl);
 });
 
 app.get('/auth/google/callback', async (req, res) => {
     try {
-        const { code, state } = req.query; // state يحتوي الآن على رابط العودة للتطبيق
+        const { code, state } = req.query;
+        console.log('Callback received. Code:', !!code, 'State:', state);
+
         const { tokens } = await oauth2Client.getToken(code);
         oauth2Client.setCredentials(tokens);
         const userInfoResponse = await oauth2Client.request({ url: 'https://www.googleapis.com/oauth2/v3/userinfo' });
@@ -210,23 +220,25 @@ app.get('/auth/google/callback', async (req, res) => {
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' });
 
         // ✅ التحقق والتوجيه
-        if (state && state !== 'web') {
+        if (state && state !== 'web' && state !== 'undefined') {
             console.log("📱 Redirecting to Mobile App:", state);
             
-            // التأكد من طريقة دمج التوكن بالرابط (هل يوجد ؟ مسبقاً أم لا)
-            // في روابط Expo غالباً تكون: exp://.../auth
+            // إصلاح محتمل: بعض الروابط قد تحتوي بالفعل على query params
             const separator = state.includes('?') ? '&' : '?';
+            const finalRedirect = `${state}${separator}token=${token}`;
             
-            res.redirect(`${state}${separator}token=${token}`);
+            res.redirect(finalRedirect);
             return;
         }
 
-        // Web Fallback
-        res.redirect(`https://chatzeus.vercel.app/?token=${token}`);
+        // Web Fallback (تم تصحيح الرابط هنا بإضافة حرف b الناقص)
+        console.log("💻 Redirecting to Web Fallback");
+        res.redirect(`https://chatzeusb.vercel.app/?token=${token}`);
 
     } catch (error) {
         console.error('Authentication callback error:', error);
-        res.redirect('https://chatzeus.vercel.app/?auth_error=true');
+        // تصحيح رابط الخطأ أيضاً
+        res.redirect('https://chatzeusb.vercel.app/?auth_error=true');
     }
 });
 
