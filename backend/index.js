@@ -74,97 +74,80 @@ app.use(async (req, res, next) => {
 });
 
 // ---------------------------------------------------------
-// ☢️ NUCLEAR SEEDING (Force Clear & Re-fill)
+// ☢️ Real Data Seeding (Low Stats for Testing)
 // ---------------------------------------------------------
 const seedDataForce = async () => {
     try {
-        // حذف كل شيء لضمان البيانات الجديدة
-        await Novel.deleteMany({});
-        console.log("🗑️ Deleted old novels.");
+        // Only seed if empty to preserve user's manual increments, 
+        // OR uncomment deleteMany to force reset.
+        const count = await Novel.countDocuments();
+        if (count > 0) return; 
+
+        // await Novel.deleteMany({}); // Uncomment if you want to wipe DB
+        
+        console.log("🌱 Seeding fresh data...");
 
         const generateChapters = (count) => Array.from({length: count}, (_, i) => ({
             number: i + 1,
             title: `الفصل ${i + 1}`,
-            content: `نص تجريبي للفصل ${i + 1}...`,
+            content: `هذا هو محتوى الفصل رقم ${i + 1}.\n\nيمكنك الآن تجربة قراءة هذا الفصل وسيتم احتساب المشاهدة بشكل حقيقي.`,
             createdAt: new Date()
         }));
 
         const novelsList = [
-            // --- TOP 3 ALL TIME (HERO SECTION) ---
             {
-                title: 'إمبراطور السيوف الإلهية (الأول تاريخياً)',
-                author: 'الأسطورة',
+                title: 'إمبراطور السيوف',
+                author: 'تانغ',
                 cover: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400&h=600&fit=crop',
                 category: 'شيانشيا',
-                views: 10000000, // 10 مليون (سيظهر في الأعلى)
-                dailyViews: 100, // قليل اليوم
-                weeklyViews: 500,
-                monthlyViews: 2000,
-                chapters: generateChapters(100)
+                views: 10, // Start low
+                dailyViews: 0,
+                weeklyViews: 2,
+                monthlyViews: 5,
+                chapters: generateChapters(50)
             },
             {
-                title: 'سيد الفوضى (الثاني تاريخياً)',
+                title: 'عالم الفوضى',
                 author: 'خالد',
                 cover: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=600&fit=crop',
                 category: 'شوانهوان',
-                views: 9000000, 
-                dailyViews: 50,
-                chapters: generateChapters(80)
+                views: 5,
+                dailyViews: 0,
+                chapters: generateChapters(30)
             },
             {
-                title: 'الظل الأخير (الثالث تاريخياً)',
+                title: 'الظل القاتل',
                 author: 'ماساشي',
                 cover: 'https://images.unsplash.com/photo-1514539079130-25950c84af65?w=400&h=600&fit=crop',
                 category: 'أكشن',
-                views: 8000000,
-                dailyViews: 10,
-                chapters: generateChapters(60)
-            },
-
-            // --- TRENDING TODAY (DAILY TOP) ---
-            {
-                title: 'نظام المستوى الفائق (تريند اليوم)',
-                author: 'جديد',
-                cover: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=400&h=600&fit=crop',
-                category: 'نظام',
-                views: 50000, // قليل كلياً
-                dailyViews: 50000, // عالي جداً اليوم (يجب أن يكون الأول في فلتر اليوم)
-                weeklyViews: 50000,
-                monthlyViews: 50000,
+                views: 0,
+                dailyViews: 0,
                 chapters: generateChapters(20)
             },
-            {
-                title: 'صعود البطل (الثاني اليوم)',
-                author: 'كاتب',
-                cover: 'https://images.unsplash.com/photo-1518806118471-f28b20a1d79d?w=400&h=600&fit=crop',
-                category: 'فانتازيا',
-                views: 20000,
-                dailyViews: 15000, // الثاني اليوم
-                chapters: generateChapters(15)
-            },
-
-            // --- FILLER NOVELS (15 More) ---
-            ...Array.from({length: 15}, (_, i) => ({
-                title: `رواية إضافية ${i + 1}`,
+            // Filler novels
+            ...Array.from({length: 17}, (_, i) => ({
+                title: `رواية تجريبية ${i + 1}`,
                 author: `مؤلف ${i + 1}`,
                 cover: `https://images.unsplash.com/photo-${1500000000000 + (i * 1000)}?w=400&h=600&fit=crop`,
                 category: 'مغامرات',
-                views: Math.floor(Math.random() * 10000), // عشوائي
-                dailyViews: Math.floor(Math.random() * 100), // عشوائي
+                views: 0,
+                dailyViews: 0,
                 chapters: generateChapters(10)
             }))
         ];
 
         await Novel.insertMany(novelsList);
-        console.log("✅ FORCED SEED COMPLETE: 20 Novels Created.");
+        console.log("✅ Seeded 20 novels with LOW stats for testing.");
     } catch (e) {
         console.error("Seeding error:", e);
     }
 };
 
 app.post('/api/seed', async (req, res) => {
+    // This endpoint allows you to manually trigger a reset if needed
+    await Novel.deleteMany({});
     await seedDataForce();
-    res.json({ message: "Database Reset & Seeded" });
+    res.json({ message: "Database Wiped and Re-seeded with fresh data" });
 });
 
 // ---------------------------------------------------------
@@ -173,16 +156,22 @@ app.post('/api/seed', async (req, res) => {
 
 app.post('/api/novels/:id/view', async (req, res) => {
     try {
-        await Novel.findByIdAndUpdate(req.params.id, {
+        // Increment all counters atomically
+        const updated = await Novel.findByIdAndUpdate(req.params.id, {
             $inc: { 
                 views: 1, 
                 dailyViews: 1, 
                 weeklyViews: 1, 
                 monthlyViews: 1 
             }
-        });
-        res.status(200).send('View counted');
+        }, { new: true });
+        
+        if (!updated) return res.status(404).send('Novel not found');
+        
+        console.log(`View counted for ${updated.title}. Total: ${updated.views}`);
+        res.status(200).json({ views: updated.views });
     } catch (error) {
+        console.error("View increment error:", error);
         res.status(500).send('Error');
     }
 });
@@ -197,22 +186,14 @@ app.get('/api/novels', async (req, res) => {
         if (search) query.$text = { $search: search };
         if (category && category !== 'all') query.category = category;
 
-        // المنطق الدقيق للتصنيف
         if (filter === 'featured') {
-            // المميز: أعلى 3 روايات في المشاهدات الكلية (بغض النظر عن اليوم)
             sort = { views: -1 };
             limit = 3;
         } else if (filter === 'trending') {
-            // الأكثر قراءة: يعتمد على الفلتر الزمني
-            if (timeRange === 'day') {
-                sort = { dailyViews: -1 }; // ترتيب حسب مشاهدات اليوم
-            } else if (timeRange === 'week') {
-                sort = { weeklyViews: -1 }; // ترتيب حسب مشاهدات الاسبوع
-            } else if (timeRange === 'month') {
-                sort = { monthlyViews: -1 }; // ترتيب حسب مشاهدات الشهر
-            } else {
-                sort = { views: -1 }; // الكل
-            }
+            if (timeRange === 'day') sort = { dailyViews: -1 };
+            else if (timeRange === 'week') sort = { weeklyViews: -1 };
+            else if (timeRange === 'month') sort = { monthlyViews: -1 };
+            else sort = { views: -1 };
             limit = 10;
         } else if (filter === 'latest_updates') {
             sort = { lastChapterUpdate: -1 };
@@ -226,10 +207,8 @@ app.get('/api/novels', async (req, res) => {
 
         const novels = await Novel.find(query).sort(sort).limit(limit);
 
-        // معالجة البيانات للإرجاع
         const result = novels.map(n => {
             const obj = n.toObject();
-            // لآخر الفصول
             if (filter === 'latest_updates') {
                 obj.recentChapters = obj.chapters
                     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
@@ -237,7 +216,6 @@ app.get('/api/novels', async (req, res) => {
                     .map(c => ({ number: c.number, createdAt: c.createdAt }));
                 obj.remainingChaptersCount = Math.max(0, obj.chapters.length - 3);
             }
-            // إزالة المحتوى الثقيل وتقليل حجم الرد
             obj.chaptersCount = obj.chapters ? obj.chapters.length : 0;
             delete obj.chapters; 
             return obj;
@@ -251,6 +229,9 @@ app.get('/api/novels', async (req, res) => {
 
 app.get('/api/novels/:id', async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+             return res.status(400).json({ message: 'Invalid ID' });
+        }
         const novel = await Novel.findById(req.params.id);
         if (!novel) return res.status(404).json({ message: 'Novel not found' });
         
@@ -271,19 +252,26 @@ app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
     try {
         const novel = await Novel.findById(req.params.novelId);
         if (!novel) return res.status(404).json({ message: 'Novel not found' });
+
+        // Find chapter by ID (if passed as string ID) OR by number
         let chapter = novel.chapters.find(c => c._id.toString() === req.params.chapterId) || 
                       novel.chapters.find(c => c.number == req.params.chapterId);
+
         if (!chapter) return res.status(404).json({ message: 'Chapter not found' });
+
         res.json(chapter);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 });
 
+// Library APIs
 app.post('/api/novel/update', verifyToken, async (req, res) => {
     try {
         const { novelId, title, cover, author, isFavorite, progress, lastChapterId, lastChapterTitle } = req.body;
+        
         let libraryItem = await NovelLibrary.findOne({ user: req.user.id, novelId });
+
         if (!libraryItem) {
             libraryItem = new NovelLibrary({
                 user: req.user.id, novelId, title, cover, author,
@@ -300,6 +288,7 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
             if (lastChapterTitle !== undefined) libraryItem.lastChapterTitle = lastChapterTitle;
             libraryItem.lastReadAt = new Date();
         }
+
         await libraryItem.save();
         res.json(libraryItem);
     } catch (error) {
@@ -339,6 +328,7 @@ function verifyToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
     if (!token) return res.status(401).json({ message: 'No token' });
+
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) return res.status(403).json({ message: 'Invalid token' });
         req.user = user;
@@ -350,6 +340,7 @@ app.get('/auth/google', (req, res) => {
     const redirectUri = req.query.redirect_uri;
     const platform = req.query.platform;
     let state = redirectUri || (platform === 'mobile' ? 'mobile' : 'web');
+    
     const authorizeUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
@@ -366,21 +357,25 @@ app.get('/auth/google/callback', async (req, res) => {
         oauth2Client.setCredentials(tokens);
         const userInfoResponse = await oauth2Client.request({ url: 'https://www.googleapis.com/oauth2/v3/userinfo' });
         const userInfo = userInfoResponse.data;
+
         let user = await User.findOne({ googleId: userInfo.sub });
         if (!user) {
             user = new User({
-                googleId: userInfo.sub, email: userInfo.email, name: userInfo.name, picture: userInfo.picture,
+                googleId: userInfo.sub,
+                email: userInfo.email,
+                name: userInfo.name,
+                picture: userInfo.picture,
             });
             await user.save();
             await new Settings({ user: user._id }).save();
         }
+
         const payload = { id: user._id, googleId: user.googleId, name: user.name, email: user.email };
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '365d' });
 
-        // Trigger seed if needed, but the main seed is manual now for safety, 
-        // OR we can trigger it once per server restart if empty.
-        // For this user request, we rely on the logic above or a direct call if db is empty.
-        
+        // Initial seed check on login
+        seedDataForce();
+
         if (state && state.startsWith('exp://')) {
             const separator = state.includes('?') ? '&' : '?';
             res.redirect(`${state}${separator}token=${token}`);
