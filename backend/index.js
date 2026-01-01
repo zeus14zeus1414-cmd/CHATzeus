@@ -42,7 +42,7 @@ const server = http.createServer(app);
 // إعدادات CORS
 const allowedOrigins = [
     'https://chatzeus.vercel.app',
-    'https://chatzeusb.vercel.app', // Added correct domain
+    'https://chatzeusb.vercel.app', 
     'https://dashporddd.vercel.app',
     'https://tranzeus.vercel.app',
     'http://localhost:5500',
@@ -165,16 +165,12 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------------------------------
-// 🔐 نظام المصادقة (Auth System) - معدل للموبايل بشكل صحيح
+// 🔐 نظام المصادقة (Auth System) - Reverted to Mobile State Logic
 // ---------------------------------------------------------
 
 app.get('/auth/google', (req, res) => {
-    // 1. استقبال رابط العودة من التطبيق
-    const redirectUri = req.query.redirect_uri;
-    
-    // 2. نخزن هذا الرابط في الـ state
-    // إذا لم يصلنا رابط، نعتبره 'web'
-    const state = redirectUri && redirectUri !== 'undefined' ? redirectUri : 'web';
+    // نتحقق مما إذا كان الطلب من الموبايل عبر query param
+    const state = req.query.platform === 'mobile' ? 'mobile' : 'web';
     
     console.log('Login initiated with state:', state);
 
@@ -219,25 +215,21 @@ app.get('/auth/google/callback', async (req, res) => {
 
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' });
 
-        // ✅ التحقق والتوجيه
-        if (state && state !== 'web' && state !== 'undefined') {
-            console.log("📱 Redirecting to Mobile App:", state);
-            
-            // إصلاح محتمل: بعض الروابط قد تحتوي بالفعل على query params
-            const separator = state.includes('?') ? '&' : '?';
-            const finalRedirect = `${state}${separator}token=${token}`;
-            
-            res.redirect(finalRedirect);
+        // ✅ هنا يحدث السحر: إذا كان الطلب من الموبايل، نعيد التوجيه للتطبيق عبر الـ Scheme
+        if (state === 'mobile') {
+            // هذا الرابط يجب أن يطابق الـ scheme في app.json
+            const deepLink = `aplcionszeus://auth?token=${token}`;
+            console.log("📱 Redirecting to Mobile App:", deepLink);
+            res.redirect(deepLink);
             return;
         }
 
-        // Web Fallback (تم تصحيح الرابط هنا بإضافة حرف b الناقص)
+        // إذا كان ويب، نعود للموقع العادي (تم تصحيح الرابط هنا)
         console.log("💻 Redirecting to Web Fallback");
         res.redirect(`https://chatzeusb.vercel.app/?token=${token}`);
 
     } catch (error) {
         console.error('Authentication callback error:', error);
-        // تصحيح رابط الخطأ أيضاً
         res.redirect('https://chatzeusb.vercel.app/?auth_error=true');
     }
 });
