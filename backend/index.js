@@ -39,9 +39,10 @@ const cloudinary = require('cloudinary').v2;
 const app = express();
 const server = http.createServer(app);
 
-// إعدادات CORS للسماح بالتطبيق
+// إعدادات CORS
 const allowedOrigins = [
     'https://chatzeus.vercel.app',
+    'https://chatzeusb.vercel.app', 
     'https://dashporddd.vercel.app',
     'https://tranzeus.vercel.app',
     'http://localhost:5500',
@@ -50,7 +51,6 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // !origin يسمح لطلبات الهاتف (Mobile Apps) بالمرور
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -98,11 +98,15 @@ function verifyToken(req, res, next) {
     });
 }
 
+// Root Route (Health Check)
+app.get('/', (req, res) => {
+    res.send('Server is running correctly. Use /auth/google to login.');
+});
+
 // ---------------------------------------------------------
 // 🚀 نقاط النهاية الخاصة بتطبيق الروايات (Novel App API)
 // ---------------------------------------------------------
 
-// جلب المكتبة (المفضلة أو السجل)
 app.get('/api/novel/library', verifyToken, async (req, res) => {
     try {
         const { type } = req.query; 
@@ -122,7 +126,6 @@ app.get('/api/novel/library', verifyToken, async (req, res) => {
     }
 });
 
-// التحقق من حالة رواية معينة
 app.get('/api/novel/status/:novelId', verifyToken, async (req, res) => {
     try {
         const item = await NovelLibrary.findOne({ 
@@ -135,7 +138,6 @@ app.get('/api/novel/status/:novelId', verifyToken, async (req, res) => {
     }
 });
 
-// تحديث المكتبة (إضافة للمفضلة أو حفظ التقدم)
 app.post('/api/novel/update', verifyToken, async (req, res) => {
     try {
         const { novelId, title, cover, author, isFavorite, progress, lastChapterId, lastChapterTitle } = req.body;
@@ -152,7 +154,7 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
         const updated = await NovelLibrary.findOneAndUpdate(
             { user: req.user.id, novelId },
             { $set: updateData },
-            { new: true, upsert: true } // ينشئ السجل إذا لم يكن موجوداً
+            { new: true, upsert: true }
         );
 
         res.json(updated);
@@ -163,14 +165,25 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------------------------------
-// 🔐 نظام المصادقة (Auth System) - معدل للموبايل
+// 🔐 نظام المصادقة (Auth System) - Updated for Dynamic Redirect
 // ---------------------------------------------------------
 
 app.get('/auth/google', (req, res) => {
-    // نلتقط المعامل platform من التطبيق
-    // إذا كان mobile، سنمرره في الـ state لجوجل ليعود إلينا لاحقاً
-    const state = req.query.platform === 'mobile' ? 'mobile' : 'web';
+    // الأولوية لـ redirect_uri إذا كان موجوداً (للعمل مع Expo Go)
+    const redirectUri = req.query.redirect_uri;
     
+    // إذا لم يوجد، نتحقق من platform (للدعم القديم)
+    const platform = req.query.platform;
+
+    let state = 'web';
+    if (redirectUri) {
+        state = redirectUri; // State stores the FULL dynamic URI
+    } else if (platform === 'mobile') {
+        state = 'mobile';
+    }
+    
+    console.log('Login initiated with state:', state);
+
     const authorizeUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
@@ -181,7 +194,9 @@ app.get('/auth/google', (req, res) => {
 
 app.get('/auth/google/callback', async (req, res) => {
     try {
-        const { code, state } = req.query; // نستعيد state هنا (mobile أو web)
+        const { code, state } = req.query;
+        console.log('Callback received. Code:', !!code, 'State:', state);
+
         const { tokens } = await oauth2Client.getToken(code);
         oauth2Client.setCredentials(tokens);
         const userInfoResponse = await oauth2Client.request({ url: 'https://www.googleapis.com/oauth2/v3/userinfo' });
@@ -210,34 +225,39 @@ app.get('/auth/google/callback', async (req, res) => {
 
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' });
 
-        // ✅ هنا يحدث السحر: إذا كان الطلب من الموبايل، نعيد التوجيه للتطبيق
-        if (state === 'mobile') {
-            // هذا الرابط يجب أن يطابق الـ scheme في app.json
-            const deepLink = `aplcionszeus://auth?token=${token}`;
-            console.log("📱 Redirecting to Mobile App:", deepLink);
+        // 1. التعامل مع الرابط الديناميكي (Expo Go)
+        if (state && state.startsWith('exp://')) {
+            console.log("📱 Redirecting to Expo Go:", state);
+            const separator = state.includes('?') ? '&' : '?';
+            res.redirect(`${state}${separator}token=${token}`);
+            return;
+        }
+
+        // 2. التعامل مع الـ Scheme المخصص (Standalone App)
+        // إذا كان الـ state هو 'mobile' أو رابط scheme مباشر
+        if (state === 'mobile' || state.startsWith('aplcionszeus://')) {
+            const deepLink = state === 'mobile' 
+                ? `aplcionszeus://auth?token=${token}`
+                : `${state}?token=${token}`;
+                
+            console.log("📱 Redirecting to Native App:", deepLink);
             res.redirect(deepLink);
             return;
         }
 
-        // إذا كان ويب، نعود للموقع العادي
-        res.redirect(`https://chatzeus.vercel.app/?token=${token}`);
+        // 3. Web Fallback
+        console.log("💻 Redirecting to Web Fallback");
+        res.redirect(`https://chatzeusb.vercel.app/?token=${token}`);
 
     } catch (error) {
         console.error('Authentication callback error:', error);
-        res.redirect('https://chatzeus.vercel.app/?auth_error=true');
+        res.redirect('https://chatzeusb.vercel.app/?auth_error=true');
     }
 });
 
 app.get('/api/user', verifyToken, (req, res) => {
     res.json({ loggedIn: true, user: req.user });
 });
-
-// =================================================================
-// ⚠️ ملاحظة هامة جداً:
-// قم بوضع باقي أكواد الشات القديمة (Chat Endpoints, Translation, etc.) هنا
-// لا تحذفها إذا كنت تحتاجها!
-// =================================================================
-
 
 // Database Connection
 mongoose.connect(process.env.MONGODB_URI)
