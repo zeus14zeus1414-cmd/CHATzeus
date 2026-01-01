@@ -39,7 +39,7 @@ const cloudinary = require('cloudinary').v2;
 const app = express();
 const server = http.createServer(app);
 
-// إعدادات CORS للسماح بالتطبيق
+// إعدادات CORS
 const allowedOrigins = [
     'https://chatzeus.vercel.app',
     'https://dashporddd.vercel.app',
@@ -50,7 +50,6 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // !origin يسمح لطلبات الهاتف (Mobile Apps) بالمرور
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -102,7 +101,6 @@ function verifyToken(req, res, next) {
 // 🚀 نقاط النهاية الخاصة بتطبيق الروايات (Novel App API)
 // ---------------------------------------------------------
 
-// جلب المكتبة (المفضلة أو السجل)
 app.get('/api/novel/library', verifyToken, async (req, res) => {
     try {
         const { type } = req.query; 
@@ -122,7 +120,6 @@ app.get('/api/novel/library', verifyToken, async (req, res) => {
     }
 });
 
-// التحقق من حالة رواية معينة
 app.get('/api/novel/status/:novelId', verifyToken, async (req, res) => {
     try {
         const item = await NovelLibrary.findOne({ 
@@ -135,7 +132,6 @@ app.get('/api/novel/status/:novelId', verifyToken, async (req, res) => {
     }
 });
 
-// تحديث المكتبة (إضافة للمفضلة أو حفظ التقدم)
 app.post('/api/novel/update', verifyToken, async (req, res) => {
     try {
         const { novelId, title, cover, author, isFavorite, progress, lastChapterId, lastChapterTitle } = req.body;
@@ -152,7 +148,7 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
         const updated = await NovelLibrary.findOneAndUpdate(
             { user: req.user.id, novelId },
             { $set: updateData },
-            { new: true, upsert: true } // ينشئ السجل إذا لم يكن موجوداً
+            { new: true, upsert: true }
         );
 
         res.json(updated);
@@ -163,25 +159,28 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------------------------------
-// 🔐 نظام المصادقة (Auth System) - معدل للموبايل
+// 🔐 نظام المصادقة (Auth System) - معدل للموبايل بشكل صحيح
 // ---------------------------------------------------------
 
 app.get('/auth/google', (req, res) => {
-    // نلتقط المعامل platform من التطبيق
-    // إذا كان mobile، سنمرره في الـ state لجوجل ليعود إلينا لاحقاً
-    const state = req.query.platform === 'mobile' ? 'mobile' : 'web';
+    // 1. استقبال رابط العودة من التطبيق (الموبايل يرسله، الويب لا يرسله)
+    const redirectUri = req.query.redirect_uri;
+    
+    // 2. نخزن هذا الرابط في الـ state لنستعيده بعد عودة جوجل
+    // إذا لم يوجد رابط عودة، نعتبره 'web'
+    const state = redirectUri ? redirectUri : 'web';
     
     const authorizeUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
-        state: state 
+        state: state // نمرر الرابط كـ state
     });
     res.redirect(authorizeUrl);
 });
 
 app.get('/auth/google/callback', async (req, res) => {
     try {
-        const { code, state } = req.query; // نستعيد state هنا (mobile أو web)
+        const { code, state } = req.query; // state يحتوي الآن على رابط العودة للتطبيق
         const { tokens } = await oauth2Client.getToken(code);
         oauth2Client.setCredentials(tokens);
         const userInfoResponse = await oauth2Client.request({ url: 'https://www.googleapis.com/oauth2/v3/userinfo' });
@@ -210,16 +209,19 @@ app.get('/auth/google/callback', async (req, res) => {
 
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' });
 
-        // ✅ هنا يحدث السحر: إذا كان الطلب من الموبايل، نعيد التوجيه للتطبيق
-        if (state === 'mobile') {
-            // هذا الرابط يجب أن يطابق الـ scheme في app.json
-            const deepLink = `aplcionszeus://auth?token=${token}`;
-            console.log("📱 Redirecting to Mobile App:", deepLink);
-            res.redirect(deepLink);
+        // ✅ التحقق والتوجيه
+        if (state && state !== 'web') {
+            console.log("📱 Redirecting to Mobile App:", state);
+            
+            // التأكد من طريقة دمج التوكن بالرابط (هل يوجد ؟ مسبقاً أم لا)
+            // في روابط Expo غالباً تكون: exp://.../auth
+            const separator = state.includes('?') ? '&' : '?';
+            
+            res.redirect(`${state}${separator}token=${token}`);
             return;
         }
 
-        // إذا كان ويب، نعود للموقع العادي
+        // Web Fallback
         res.redirect(`https://chatzeus.vercel.app/?token=${token}`);
 
     } catch (error) {
@@ -231,13 +233,6 @@ app.get('/auth/google/callback', async (req, res) => {
 app.get('/api/user', verifyToken, (req, res) => {
     res.json({ loggedIn: true, user: req.user });
 });
-
-// =================================================================
-// ⚠️ ملاحظة هامة جداً:
-// قم بوضع باقي أكواد الشات القديمة (Chat Endpoints, Translation, etc.) هنا
-// لا تحذفها إذا كنت تحتاجها!
-// =================================================================
-
 
 // Database Connection
 mongoose.connect(process.env.MONGODB_URI)
