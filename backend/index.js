@@ -23,6 +23,7 @@ const { OAuth2Client } = require('google-auth-library');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
+const multer = require('multer'); // إضافة Multer لرفع الملفات
 
 // --- Config Imports ---
 let firestore, cloudinary;
@@ -32,7 +33,6 @@ try {
     cloudinary = require('./config/cloudinary');
 } catch (e) {
     console.warn("⚠️ Config files check failed...");
-    // Fallback logic kept minimal for brevity
 }
 
 // Models
@@ -42,14 +42,11 @@ const NovelLibrary = require('./models/novelLibrary.model.js');
 const Settings = require('./models/settings.model.js');
 
 const app = express();
-const ADMIN_EMAIL = "flaf.aboode@gmail.com"; // الإيميل الأدمن الثابت
+const ADMIN_EMAIL = "flaf.aboode@gmail.com"; 
 
-const allowedOrigins = [
-    'https://chatzeus.vercel.app',
-    'https://chatzeusb.vercel.app', 
-    'http://localhost:8081',
-    'exp://localhost:8081'
-];
+// إعداد Multer للتعامل مع رفع الصور في الذاكرة
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
 app.use(cors({
     origin: '*',
@@ -85,7 +82,6 @@ app.use(async (req, res, next) => {
     }
 });
 
-// Middleware للتحقق من التوكن
 function verifyToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -98,7 +94,6 @@ function verifyToken(req, res, next) {
     });
 }
 
-// Middleware للتحقق من الأدمن
 async function verifyAdmin(req, res, next) {
     verifyToken(req, res, async () => {
         const user = await User.findById(req.user.id);
@@ -111,45 +106,51 @@ async function verifyAdmin(req, res, next) {
 }
 
 // =========================================================
-// 🗑️ ADMIN API: تصفير النظام (Wipe Data)
+// 🖼️ UPLOAD API: رفع الصور إلى Cloudinary
+// =========================================================
+app.post('/api/upload', verifyAdmin, upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+        // تحويل البفر إلى Base64 لرفعه إلى Cloudinary
+        const b64 = Buffer.from(req.file.buffer).toString('base64');
+        let dataURI = "data:" + req.file.mimetype + ";base64," + b64;
+        
+        const result = await cloudinary.uploader.upload(dataURI, {
+            folder: "zeus_novels",
+            resource_type: "image"
+        });
+
+        res.json({ url: result.secure_url });
+    } catch (error) {
+        console.error("Upload Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// =========================================================
+// 🗑️ ADMIN API
 // =========================================================
 app.post('/api/admin/nuke', verifyAdmin, async (req, res) => {
     try {
-        console.log("☢️ NUKING DATABASE REQUESTED BY ADMIN");
-        
-        // 1. مسح جميع الروايات والمكتبات في MongoDB
         await Novel.deleteMany({});
         await NovelLibrary.deleteMany({});
-        
-        // 2. مسح الكوليكشن من Firestore (عملية معقدة قليلاً، سنحذف الرووت فقط كمرجع)
-        // ملاحظة: حذف الكوليكشن في Firestore يتطلب تكراراً، هنا سنكتفي بمسح المونجو
-        // والتطبيق لن يرى البيانات القديمة في فايرستور لأن الروابط قطعت.
-        
-        res.json({ message: "تم تصفير النظام بنجاح. يمكنك الآن البدء برفع بيانات حقيقية." });
+        res.json({ message: "تم تصفير النظام بنجاح." });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
 // =========================================================
-// 📝 ADMIN API: إدارة الروايات (Create, Update, Delete)
+// 📝 ADMIN API: الروايات
 // =========================================================
-
-// إنشاء رواية جديدة
 app.post('/api/admin/novels', verifyAdmin, async (req, res) => {
     try {
         const { title, cover, description, translator, category, tags } = req.body;
         
         const newNovel = new Novel({
-            title,
-            cover, // رابط الصورة
-            description,
-            author: translator, // نخزن المترجم في خانة المؤلف
-            category,
-            tags,
-            chapters: [],
-            views: 0,
-            status: 'مستمرة'
+            title, cover, description, author: translator, category, tags,
+            chapters: [], views: 0, status: 'مستمرة'
         });
 
         await newNovel.save();
@@ -159,7 +160,6 @@ app.post('/api/admin/novels', verifyAdmin, async (req, res) => {
     }
 });
 
-// تحديث رواية
 app.put('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
     try {
         const { title, cover, description, translator, category, tags, status } = req.body;
@@ -172,14 +172,10 @@ app.put('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
     }
 });
 
-// حذف رواية (والفصول المرتبطة بها)
 app.delete('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
     try {
         await Novel.findByIdAndDelete(req.params.id);
-        // تنظيف المكتبات للمستخدمين
         await NovelLibrary.deleteMany({ novelId: req.params.id });
-        
-        // ملاحظة: يفضل حذف الفصول من Firestore أيضاً، لكن للتبسيط الآن سنحذف الرابط فقط
         res.json({ message: "Deleted successfully" });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -187,10 +183,8 @@ app.delete('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
 });
 
 // =========================================================
-// 📖 ADMIN API: إدارة الفصول (Hybrid: Mongo + Firestore)
+// 📖 ADMIN API: الفصول
 // =========================================================
-
-// إضافة فصل
 app.post('/api/admin/chapters', verifyAdmin, async (req, res) => {
     try {
         const { novelId, number, title, content } = req.body;
@@ -198,30 +192,14 @@ app.post('/api/admin/chapters', verifyAdmin, async (req, res) => {
         const novel = await Novel.findById(novelId);
         if (!novel) return res.status(404).json({ message: "Novel not found" });
 
-        // 1. حفظ المحتوى في Firestore
         if (firestore) {
-            await firestore
-                .collection('novels')
-                .doc(novelId)
-                .collection('chapters')
-                .doc(number.toString())
-                .set({
-                    title,
-                    content,
-                    lastUpdated: new Date()
-                });
+            await firestore.collection('novels').doc(novelId).collection('chapters').doc(number.toString()).set({
+                title, content, lastUpdated: new Date()
+            });
         }
 
-        // 2. تحديث الميتاداتا في MongoDB
-        // تحقق إذا الفصل موجود مسبقاً لتحديثه بدلاً من إضافته
         const existingChapterIndex = novel.chapters.findIndex(c => c.number == number);
-        
-        const chapterMeta = {
-            number: Number(number),
-            title,
-            createdAt: new Date(),
-            views: 0
-        };
+        const chapterMeta = { number: Number(number), title, createdAt: new Date(), views: 0 };
 
         if (existingChapterIndex > -1) {
             novel.chapters[existingChapterIndex] = { ...novel.chapters[existingChapterIndex].toObject(), ...chapterMeta };
@@ -230,27 +208,53 @@ app.post('/api/admin/chapters', verifyAdmin, async (req, res) => {
         }
         
         novel.lastChapterUpdate = new Date();
-        novel.markModified('chapters'); // مهم لتحديث المصفوفة
+        novel.markModified('chapters');
         await novel.save();
 
         res.json({ message: "Chapter saved successfully" });
     } catch (error) {
-        console.error(error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// حذف فصل
+// تعديل فصل (عنوان، محتوى)
+app.put('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res) => {
+    try {
+        const { novelId, number } = req.params;
+        const { title, content } = req.body;
+
+        const novel = await Novel.findById(novelId);
+        if (!novel) return res.status(404).json({ message: "Novel not found" });
+
+        // 1. تحديث Firestore (المحتوى والعنوان)
+        if (firestore) {
+            await firestore.collection('novels').doc(novelId).collection('chapters').doc(number.toString()).update({
+                title, content, lastUpdated: new Date()
+            });
+        }
+
+        // 2. تحديث MongoDB (العنوان فقط)
+        const chapterIndex = novel.chapters.findIndex(c => c.number == number);
+        if (chapterIndex > -1) {
+            novel.chapters[chapterIndex].title = title;
+            novel.markModified('chapters');
+            await novel.save();
+        }
+
+        res.json({ message: "Chapter updated successfully" });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.delete('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res) => {
     try {
         const { novelId, number } = req.params;
         const novel = await Novel.findById(novelId);
         
-        // حذف من Mongo
         novel.chapters = novel.chapters.filter(c => c.number != number);
         await novel.save();
 
-        // حذف من Firestore
         if (firestore) {
             await firestore.collection('novels').doc(novelId).collection('chapters').doc(number.toString()).delete();
         }
@@ -262,18 +266,40 @@ app.delete('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res)
 });
 
 // =========================================================
-// APIs العامة (للمستخدمين)
+// APIs العامة
 // =========================================================
 
-app.post('/api/novels/:id/view', async (req, res) => {
+// تسجيل مشاهدة (مع التحقق من التكرار)
+app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).send('Invalid ID');
-        await Novel.findByIdAndUpdate(req.params.id, { $inc: { views: 1, dailyViews: 1, weeklyViews: 1, monthlyViews: 1 } });
-        res.status(200).send('OK');
-    } catch (error) { res.status(500).send('Error'); }
+        
+        const novel = await Novel.findById(req.params.id);
+        if (!novel) return res.status(404).send('Novel not found');
+
+        // تحقق مما إذا كان المستخدم قد شاهد الرواية مسبقاً
+        const userId = req.user.id;
+        const alreadyViewed = novel.viewedBy.includes(userId);
+
+        if (!alreadyViewed) {
+            // إضافة المستخدم للقائمة وزيادة العدادات
+            novel.viewedBy.push(userId);
+            novel.views += 1;
+            novel.dailyViews += 1;
+            novel.weeklyViews += 1;
+            novel.monthlyViews += 1;
+            await novel.save();
+            return res.status(200).json({ viewed: true, total: novel.views });
+        } else {
+            // المستخدم شاهدها من قبل، لا نفعل شيئاً
+            return res.status(200).json({ viewed: false, message: 'Already viewed', total: novel.views });
+        }
+
+    } catch (error) { 
+        res.status(500).send('Error'); 
+    }
 });
 
-// جلب الروايات (تم التعديل لجلب البيانات الحقيقية فقط)
 app.get('/api/novels', async (req, res) => {
     try {
         const { filter, search, category } = req.query;
@@ -308,7 +334,6 @@ app.get('/api/novels/:id', async (req, res) => {
     }
 });
 
-// جلب محتوى الفصل (Mongo + Firestore)
 app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
     try {
         const { novelId, chapterId } = req.params;
@@ -317,7 +342,6 @@ app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
         const novel = await Novel.findById(novelId);
         if (!novel) return res.status(404).json({ message: 'Novel not found' });
 
-        // البحث عن الفصل
         let chapterMeta = novel.chapters.find(c => c._id.toString() === chapterId) || 
                           novel.chapters.find(c => c.number == chapterId);
 
@@ -333,29 +357,34 @@ app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
             }
         }
 
-        res.json({
-            ...chapterMeta.toObject(),
-            content: content
-        });
-
+        res.json({ ...chapterMeta.toObject(), content: content });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 });
 
-// Library Routes (Standard)
+// Library Logic with Favorites Counter Sync
 app.post('/api/novel/update', verifyToken, async (req, res) => {
     try {
         const { novelId, title, cover, author, isFavorite, progress, lastChapterId, lastChapterTitle } = req.body;
         if (!novelId || !mongoose.Types.ObjectId.isValid(novelId)) return res.status(400).json({ message: 'Invalid ID' });
 
         let libraryItem = await NovelLibrary.findOne({ user: req.user.id, novelId });
+        let isNewFavorite = false;
+        let isRemovedFavorite = false;
+
         if (!libraryItem) {
             libraryItem = new NovelLibrary({ user: req.user.id, novelId, title, cover, author, isFavorite: isFavorite || false, progress: progress || 0, lastChapterId, lastChapterTitle });
+            if (isFavorite) isNewFavorite = true;
         } else {
+            // Check status change for counter
+            if (isFavorite !== undefined) {
+                if (isFavorite && !libraryItem.isFavorite) isNewFavorite = true;
+                if (!isFavorite && libraryItem.isFavorite) isRemovedFavorite = true;
+                libraryItem.isFavorite = isFavorite;
+            }
             if (title) libraryItem.title = title;
             if (cover) libraryItem.cover = cover;
-            if (isFavorite !== undefined) libraryItem.isFavorite = isFavorite;
             if (progress !== undefined) libraryItem.progress = progress;
             if (lastChapterId) {
                 libraryItem.lastChapterId = lastChapterId;
@@ -364,6 +393,14 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
             libraryItem.lastReadAt = new Date();
         }
         await libraryItem.save();
+
+        // Update Novel Favorites Counter
+        if (isNewFavorite) {
+            await Novel.findByIdAndUpdate(novelId, { $inc: { favorites: 1 } });
+        } else if (isRemovedFavorite) {
+            await Novel.findByIdAndUpdate(novelId, { $inc: { favorites: -1 } });
+        }
+
         res.json(libraryItem);
     } catch (error) { res.status(500).json({ message: 'Failed' }); }
 });
@@ -414,7 +451,6 @@ app.get('/auth/google/callback', async (req, res) => {
         let user = await User.findOne({ googleId: userInfo.sub });
         let role = 'user';
         
-        // Auto-assign Admin Role
         if (userInfo.email === ADMIN_EMAIL) {
             role = 'admin';
         }
@@ -430,7 +466,6 @@ app.get('/auth/google/callback', async (req, res) => {
             await user.save();
             await new Settings({ user: user._id }).save();
         } else if (user.role !== role && userInfo.email === ADMIN_EMAIL) {
-            // Update role if changed
             user.role = role;
             await user.save();
         }
@@ -454,7 +489,6 @@ app.get('/auth/google/callback', async (req, res) => {
 });
 
 app.get('/api/user', verifyToken, async (req, res) => {
-    // Refresh user data from DB to ensure role is up to date
     const user = await User.findById(req.user.id);
     res.json({ loggedIn: true, user: user });
 });
