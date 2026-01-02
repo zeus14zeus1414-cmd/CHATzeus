@@ -24,6 +24,10 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 
+// --- New Imports for Architecture ---
+const { db: firestore } = require('./config/firebaseAdmin'); // Firestore Access
+const cloudinary = require('./config/cloudinary');           // Cloudinary Access
+
 // Models
 const User = require('./models/user.model.js');
 const Novel = require('./models/novel.model.js');
@@ -56,7 +60,7 @@ async function connectToDatabase() {
             serverSelectionTimeoutMS: 5000,
         });
         cachedDb = db;
-        console.log("✅ Connected to MongoDB");
+        console.log("✅ Connected to MongoDB Atlas");
         return db;
     } catch (error) {
         console.error("❌ MongoDB connection error:", error);
@@ -74,23 +78,22 @@ app.use(async (req, res, next) => {
 });
 
 // ---------------------------------------------------------
-// ☢️ Real Data Seeding (Low Stats for Testing)
+// ☢️ ARCHITECTURE CHANGE: Hybrid Seeding (Mongo + Firestore)
 // ---------------------------------------------------------
 const seedDataForce = async () => {
     try {
-        // Only seed if empty to preserve user's manual increments, 
-        // OR uncomment deleteMany to force reset.
+        // Only seed if empty
         const count = await Novel.countDocuments();
         if (count > 0) return; 
-
-        // await Novel.deleteMany({}); // Uncomment if you want to wipe DB
         
-        console.log("🌱 Seeding fresh data...");
+        console.log("🌱 Seeding: Splitting Data between MongoDB and Firestore...");
 
-        const generateChapters = (count) => Array.from({length: count}, (_, i) => ({
+        // دالة مساعدة لتوليد محتوى الفصول
+        const generateChapterData = (count) => Array.from({length: count}, (_, i) => ({
             number: i + 1,
             title: `الفصل ${i + 1}`,
-            content: `هذا هو محتوى الفصل رقم ${i + 1}.\n\nيمكنك الآن تجربة قراءة هذا الفصل وسيتم احتساب المشاهدة بشكل حقيقي.`,
+            // هذا النص سيذهب إلى Firestore
+            contentRaw: `هذا هو محتوى الفصل رقم ${i + 1}.\n\n(يتم جلب هذا النص الآن من Firestore مباشرة لسرعة فائقة).\n\nزيوس - حيث تلتقي التكنولوجيا بالروايات.`,
             createdAt: new Date()
         }));
 
@@ -100,54 +103,92 @@ const seedDataForce = async () => {
                 author: 'تانغ',
                 cover: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400&h=600&fit=crop',
                 category: 'شيانشيا',
-                views: 10, // Start low
-                dailyViews: 0,
-                weeklyViews: 2,
-                monthlyViews: 5,
-                chapters: generateChapters(50)
+                views: 12500,
+                dailyViews: 150,
+                weeklyViews: 1200,
+                monthlyViews: 5000,
+                _chaptersData: generateChapterData(50) // بيانات مؤقتة للمعالجة
             },
             {
                 title: 'عالم الفوضى',
                 author: 'خالد',
                 cover: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=600&fit=crop',
                 category: 'شوانهوان',
-                views: 5,
-                dailyViews: 0,
-                chapters: generateChapters(30)
+                views: 5300,
+                dailyViews: 45,
+                weeklyViews: 300,
+                _chaptersData: generateChapterData(30)
             },
             {
                 title: 'الظل القاتل',
                 author: 'ماساشي',
                 cover: 'https://images.unsplash.com/photo-1514539079130-25950c84af65?w=400&h=600&fit=crop',
                 category: 'أكشن',
-                views: 0,
-                dailyViews: 0,
-                chapters: generateChapters(20)
-            },
-            // Filler novels
-            ...Array.from({length: 17}, (_, i) => ({
-                title: `رواية تجريبية ${i + 1}`,
-                author: `مؤلف ${i + 1}`,
-                cover: `https://images.unsplash.com/photo-${1500000000000 + (i * 1000)}?w=400&h=600&fit=crop`,
-                category: 'مغامرات',
-                views: 0,
-                dailyViews: 0,
-                chapters: generateChapters(10)
-            }))
+                views: 890,
+                dailyViews: 10,
+                _chaptersData: generateChapterData(20)
+            }
         ];
 
-        await Novel.insertMany(novelsList);
-        console.log("✅ Seeded 20 novels with LOW stats for testing.");
+        // Loop through each novel to process properly
+        for (const novelData of novelsList) {
+            const chaptersContent = novelData._chaptersData;
+            
+            // 1. Prepare Metadata for MongoDB (Remove heavy content)
+            const mongoChapters = chaptersContent.map(c => ({
+                number: c.number,
+                title: c.title,
+                createdAt: c.createdAt,
+                views: 0
+            }));
+
+            // 2. Create Novel Document in MongoDB
+            const newNovel = new Novel({
+                ...novelData,
+                chapters: mongoChapters
+            });
+            const savedNovel = await newNovel.save();
+            
+            console.log(`Saved Metadata for: ${savedNovel.title} (${savedNovel._id})`);
+
+            // 3. Upload Content to Firestore
+            // Path: novels/{mongo_id}/chapters/{chapter_number}
+            const batch = firestore.batch();
+            
+            for (const chap of chaptersContent) {
+                const docRef = firestore
+                    .collection('novels')
+                    .doc(savedNovel._id.toString())
+                    .collection('chapters')
+                    .doc(chap.number.toString());
+                
+                batch.set(docRef, {
+                    title: chap.title,
+                    content: chap.contentRaw, // The Heavy Text
+                    lastUpdated: new Date()
+                });
+            }
+            
+            await batch.commit();
+            console.log(`🔥 Uploaded ${chaptersContent.length} chapters to Firestore for ${savedNovel.title}`);
+        }
+
+        console.log("✅ Seeding Complete: Hybrid Architecture Active.");
     } catch (e) {
         console.error("Seeding error:", e);
     }
 };
 
 app.post('/api/seed', async (req, res) => {
-    // This endpoint allows you to manually trigger a reset if needed
-    await Novel.deleteMany({});
-    await seedDataForce();
-    res.json({ message: "Database Wiped and Re-seeded with fresh data" });
+    // Dangerous endpoint - use with caution
+    try {
+        // Warning: This deletes MongoDB data but currently doesn't wipe Firestore to save requests
+        await Novel.deleteMany({});
+        await seedDataForce();
+        res.json({ message: "Database Wiped and Re-seeded with Hybrid Architecture" });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // ---------------------------------------------------------
@@ -156,7 +197,6 @@ app.post('/api/seed', async (req, res) => {
 
 app.post('/api/novels/:id/view', async (req, res) => {
     try {
-        // Increment all counters atomically
         const updated = await Novel.findByIdAndUpdate(req.params.id, {
             $inc: { 
                 views: 1, 
@@ -167,11 +207,8 @@ app.post('/api/novels/:id/view', async (req, res) => {
         }, { new: true });
         
         if (!updated) return res.status(404).send('Novel not found');
-        
-        console.log(`View counted for ${updated.title}. Total: ${updated.views}`);
         res.status(200).json({ views: updated.views });
     } catch (error) {
-        console.error("View increment error:", error);
         res.status(500).send('Error');
     }
 });
@@ -217,7 +254,7 @@ app.get('/api/novels', async (req, res) => {
                 obj.remainingChaptersCount = Math.max(0, obj.chapters.length - 3);
             }
             obj.chaptersCount = obj.chapters ? obj.chapters.length : 0;
-            delete obj.chapters; 
+            delete obj.chapters; // Don't send chapter list in list view
             return obj;
         });
 
@@ -236,6 +273,7 @@ app.get('/api/novels/:id', async (req, res) => {
         if (!novel) return res.status(404).json({ message: 'Novel not found' });
         
         const result = novel.toObject();
+        // Return light metadata only
         result.chapters = result.chapters.map(c => ({
             _id: c._id,
             number: c.number,
@@ -248,24 +286,59 @@ app.get('/api/novels/:id', async (req, res) => {
     }
 });
 
+// ---------------------------------------------------------
+// 🔥 HYBRID API: Get Chapter Content from Firestore
+// ---------------------------------------------------------
 app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
     try {
-        const novel = await Novel.findById(req.params.novelId);
+        const { novelId, chapterId } = req.params;
+
+        // 1. Check Metadata in MongoDB (Security & Existence Check)
+        const novel = await Novel.findById(novelId);
         if (!novel) return res.status(404).json({ message: 'Novel not found' });
 
-        // Find chapter by ID (if passed as string ID) OR by number
-        let chapter = novel.chapters.find(c => c._id.toString() === req.params.chapterId) || 
-                      novel.chapters.find(c => c.number == req.params.chapterId);
+        // Identify chapter number (handling if ID passed or Number passed)
+        let chapterMeta = novel.chapters.find(c => c._id.toString() === chapterId) || 
+                          novel.chapters.find(c => c.number == chapterId);
 
-        if (!chapter) return res.status(404).json({ message: 'Chapter not found' });
+        if (!chapterMeta) return res.status(404).json({ message: 'Chapter not found in metadata' });
 
-        res.json(chapter);
+        const targetChapterNum = chapterMeta.number.toString();
+
+        // 2. Fetch Actual Content from Firestore
+        // Path: novels/{mongo_id}/chapters/{chapter_number}
+        const docRef = firestore
+            .collection('novels')
+            .doc(novelId)
+            .collection('chapters')
+            .doc(targetChapterNum);
+            
+        const docSnap = await docRef.get();
+
+        if (!docSnap.exists) {
+            // Fallback for old data or sync errors
+            return res.json({
+                ...chapterMeta.toObject(),
+                content: "عذراً، محتوى هذا الفصل غير متوفر حالياً في السيرفر الجديد."
+            });
+        }
+
+        const firestoreData = docSnap.data();
+
+        // 3. Merge and Return
+        res.json({
+            ...chapterMeta.toObject(),
+            content: firestoreData.content, // The text from Firestore
+            title: firestoreData.title || chapterMeta.title
+        });
+
     } catch (error) {
+        console.error("Chapter Fetch Error:", error);
         res.status(500).json({ message: error.message });
     }
 });
 
-// Library APIs
+// Library APIs (Unchanged logic, just ensure token verification)
 app.post('/api/novel/update', verifyToken, async (req, res) => {
     try {
         const { novelId, title, cover, author, isFavorite, progress, lastChapterId, lastChapterTitle } = req.body;
@@ -373,7 +446,7 @@ app.get('/auth/google/callback', async (req, res) => {
         const payload = { id: user._id, googleId: user.googleId, name: user.name, email: user.email };
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '365d' });
 
-        // Initial seed check on login
+        // Seed check
         seedDataForce();
 
         if (state && state.startsWith('exp://')) {
