@@ -1,10 +1,12 @@
 const mongoose = require('mongoose');
 
+// ملاحظة: قمنا بإزالة حقل "content" من هنا.
+// المحتوى النصي سيخزن الآن في Firebase Firestore.
 const chapterSchema = new mongoose.Schema({
     number: { type: Number, required: true },
     title: { type: String, required: true },
-    content: { type: String, required: true },
-    createdAt: { type: Date, default: Date.now }, // لمعرفة الفصول الجديدة
+    // content: { type: String },  <-- تم الحذف
+    createdAt: { type: Date, default: Date.now }, 
     views: { type: Number, default: 0 }
 });
 
@@ -12,7 +14,7 @@ const novelSchema = new mongoose.Schema({
     title: { type: String, required: true, index: true },
     titleEn: { type: String },
     author: { type: String, required: true },
-    cover: { type: String },
+    cover: { type: String }, // سيتم استخدام روابط Cloudinary هنا مستقبلاً
     description: { type: String },
     category: { type: String, index: true },
     tags: [String],
@@ -20,7 +22,7 @@ const novelSchema = new mongoose.Schema({
     rating: { type: Number, default: 0 },
     
     // إحصائيات المشاهدات
-    views: { type: Number, default: 0 }, // المشاهدات الكلية
+    views: { type: Number, default: 0 }, 
     dailyViews: { type: Number, default: 0 },
     weeklyViews: { type: Number, default: 0 },
     monthlyViews: { type: Number, default: 0 },
@@ -28,10 +30,10 @@ const novelSchema = new mongoose.Schema({
     favorites: { type: Number, default: 0 },
     chapters: [chapterSchema],
     
-    lastChapterUpdate: { type: Date, default: Date.now }, // لترتيب الروايات حسب آخر تحديث
+    lastChapterUpdate: { type: Date, default: Date.now },
     
     isRecommended: { type: Boolean, default: false },
-    isTrending: { type: Boolean, default: false }, // يمكن الاستغناء عنه واستخدام المشاهدات
+    isTrending: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now }
 });
 
