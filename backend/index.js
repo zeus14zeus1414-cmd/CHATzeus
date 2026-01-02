@@ -207,6 +207,7 @@ app.post('/api/admin/chapters', verifyAdmin, async (req, res) => {
             novel.chapters.push(chapterMeta);
         }
         
+        // تحديث تاريخ آخر فصل لترتيب القائمة الحية
         novel.lastChapterUpdate = new Date();
         novel.markModified('chapters');
         await novel.save();
@@ -302,17 +303,22 @@ app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
 
 app.get('/api/novels', async (req, res) => {
     try {
-        const { filter, search, category, timeRange } = req.query;
+        const { filter, search, category, timeRange, limit: queryLimit } = req.query;
         let query = {};
         let sort = { views: -1 };
-        let limit = 20;
+        let limit = parseInt(queryLimit) || 20;
 
         if (search) query.$text = { $search: search };
         if (category && category !== 'all') query.category = category;
 
-        // --- تعديل الفلترة والترتيب ---
+        // --- تعديل الفلترة والترتيب بناءً على طلبك ---
         if (filter === 'latest_updates') {
+            // جلب الروايات التي تحتوي على فصل واحد على الأقل
+            query["chapters.0"] = { $exists: true };
+            // الترتيب حسب تاريخ آخر فصل تم نشره (الأحدث أولاً)
             sort = { lastChapterUpdate: -1 };
+            // الحد المطلوب للشبكة هو 24 رواية
+            limit = 24;
         } else if (filter === 'latest_added') {
             sort = { createdAt: -1 };
         } else if (filter === 'featured') {
@@ -327,16 +333,21 @@ app.get('/api/novels', async (req, res) => {
             else sort = { views: -1 };
         }
 
-        // جلب الروايات وتحويلها لـ JSON لإضافة حقل عدد الفصول يدوياً
+        // جلب الروايات وتحويلها لـ JSON
         const novels = await Novel.find(query).sort(sort).limit(limit).lean();
         
-        // حل مشكلة عدد الفصول 0: نقوم بحساب طول مصفوفة الفصول لكل رواية
-        const novelsWithCount = novels.map(novel => ({
-            ...novel,
-            chaptersCount: novel.chapters ? novel.chapters.length : 0
-        }));
+        // معالجة البيانات لإضافة عدد الفصول وبيانات الفصل الأخير للتطبيق
+        const novelsWithDetails = novels.map(novel => {
+            const chapters = novel.chapters || [];
+            return {
+                ...novel,
+                chaptersCount: chapters.length,
+                // نرسل مصفوفة الفصول ليتعامل معها الموبايل أو نرسل آخر فصل فقط
+                lastChapterUpdate: novel.lastChapterUpdate || novel.createdAt
+            };
+        });
 
-        res.json(novelsWithCount);
+        res.json(novelsWithDetails);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -429,12 +440,16 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
 });
 
 app.get('/api/novel/library', verifyToken, async (req, res) => {
-    const { type } = req.query; 
-    let query = { user: req.user.id };
-    if (type === 'favorites') query.isFavorite = true;
-    else if (type === 'history') query.progress = { $gt: 0 };
-    const items = await NovelLibrary.find(query).sort({ lastReadAt: -1 });
-    res.json(items);
+    try {
+        const { type } = req.query; 
+        let query = { user: req.user.id };
+        if (type === 'favorites') query.isFavorite = true;
+        else if (type === 'history') query.progress = { $gt: 0 };
+        const items = await NovelLibrary.find(query).sort({ lastReadAt: -1 });
+        res.json(items);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
 });
 
 app.get('/api/novel/status/:novelId', verifyToken, async (req, res) => {
