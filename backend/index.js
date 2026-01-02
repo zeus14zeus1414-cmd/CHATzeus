@@ -270,21 +270,23 @@ app.delete('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res)
 // APIs العامة
 // =========================================================
 
-// تسجيل مشاهدة (مع التحقق من التكرار)
+// تسجيل مشاهدة (تعديل: الآن يزيد العداد مع كل فصل جديد يفتحه المستخدم)
 app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).send('Invalid ID');
         
+        const { chapterNumber } = req.body; // نستقبل رقم الفصل لزيادة المشاهدات بناء عليه
         const novel = await Novel.findById(req.params.id);
         if (!novel) return res.status(404).send('Novel not found');
 
-        // تحقق مما إذا كان المستخدم قد شاهد الرواية مسبقاً
         const userId = req.user.id;
-        const alreadyViewed = novel.viewedBy.includes(userId);
+        // مفتاح المشاهدة الفريد (ايدي المستخدم + رقم الفصل) لمنع التكرار في نفس الفصل
+        const viewKey = `${userId}_ch_${chapterNumber || 'general'}`;
+        
+        const alreadyViewed = novel.viewedBy.includes(viewKey);
 
         if (!alreadyViewed) {
-            // إضافة المستخدم للقائمة وزيادة العدادات
-            novel.viewedBy.push(userId);
+            novel.viewedBy.push(viewKey);
             novel.views += 1;
             novel.dailyViews += 1;
             novel.weeklyViews += 1;
@@ -292,8 +294,7 @@ app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
             await novel.save();
             return res.status(200).json({ viewed: true, total: novel.views });
         } else {
-            // المستخدم شاهدها من قبل، لا نفعل شيئاً
-            return res.status(200).json({ viewed: false, message: 'Already viewed', total: novel.views });
+            return res.status(200).json({ viewed: false, message: 'Already viewed this chapter', total: novel.views });
         }
 
     } catch (error) { 
@@ -313,36 +314,28 @@ app.get('/api/novels', async (req, res) => {
 
         // --- تعديل الفلترة والترتيب بناءً على طلبك ---
         if (filter === 'latest_updates') {
-            // جلب الروايات التي تحتوي على فصل واحد على الأقل
             query["chapters.0"] = { $exists: true };
-            // الترتيب حسب تاريخ آخر فصل تم نشره (الأحدث أولاً)
             sort = { lastChapterUpdate: -1 };
-            // الحد المطلوب للشبكة هو 24 رواية
             limit = 24;
         } else if (filter === 'latest_added') {
             sort = { createdAt: -1 };
         } else if (filter === 'featured') {
-            // القسم العلوي: جلب أعلى 3 روايات مشاهدة فقط
             sort = { views: -1 };
             limit = 3;
         } else if (filter === 'trending') {
-            // الأكثر قراءة: الترتيب حسب النطاق الزمني
             if (timeRange === 'day') sort = { dailyViews: -1 };
             else if (timeRange === 'week') sort = { weeklyViews: -1 };
             else if (timeRange === 'month') sort = { monthlyViews: -1 };
             else sort = { views: -1 };
         }
 
-        // جلب الروايات وتحويلها لـ JSON
         const novels = await Novel.find(query).sort(sort).limit(limit).lean();
         
-        // معالجة البيانات لإضافة عدد الفصول وبيانات الفصل الأخير للتطبيق
         const novelsWithDetails = novels.map(novel => {
             const chapters = novel.chapters || [];
             return {
                 ...novel,
                 chaptersCount: chapters.length,
-                // نرسل مصفوفة الفصول ليتعامل معها الموبايل أو نرسل آخر فصل فقط
                 lastChapterUpdate: novel.lastChapterUpdate || novel.createdAt
             };
         });
@@ -359,7 +352,6 @@ app.get('/api/novels/:id', async (req, res) => {
         const novel = await Novel.findById(req.params.id).lean();
         if (!novel) return res.status(404).json({ message: 'Novel not found' });
         
-        // إضافة عدد الفصول في صفحة التفاصيل أيضاً
         novel.chaptersCount = novel.chapters ? novel.chapters.length : 0;
         
         res.json(novel);
@@ -411,7 +403,6 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
             libraryItem = new NovelLibrary({ user: req.user.id, novelId, title, cover, author, isFavorite: isFavorite || false, progress: progress || 0, lastChapterId, lastChapterTitle });
             if (isFavorite) isNewFavorite = true;
         } else {
-            // Check status change for counter
             if (isFavorite !== undefined) {
                 if (isFavorite && !libraryItem.isFavorite) isNewFavorite = true;
                 if (!isFavorite && libraryItem.isFavorite) isRemovedFavorite = true;
@@ -419,7 +410,10 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
             }
             if (title) libraryItem.title = title;
             if (cover) libraryItem.cover = cover;
+            
+            // تحديث التقدم (يُفترض أن يرسل التطبيق النسبة المئوية 0-100)
             if (progress !== undefined) libraryItem.progress = progress;
+            
             if (lastChapterId) {
                 libraryItem.lastChapterId = lastChapterId;
                 libraryItem.lastChapterTitle = lastChapterTitle;
@@ -428,7 +422,6 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
         }
         await libraryItem.save();
 
-        // Update Novel Favorites Counter
         if (isNewFavorite) {
             await Novel.findByIdAndUpdate(novelId, { $inc: { favorites: 1 } });
         } else if (isRemovedFavorite) {
