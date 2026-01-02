@@ -14,7 +14,7 @@ const novelSchema = new mongoose.Schema({
     title: { type: String, required: true, index: true },
     titleEn: { type: String },
     author: { type: String, required: true },
-    cover: { type: String }, // سيتم استخدام روابط Cloudinary هنا مستقبلاً
+    cover: { type: String }, 
     description: { type: String },
     category: { type: String, index: true },
     tags: [String],
@@ -23,6 +23,9 @@ const novelSchema = new mongoose.Schema({
     
     // إحصائيات المشاهدات
     views: { type: Number, default: 0 }, 
+    // لتتبع المشاهدات الفريدة (تخزين IDs للمستخدمين)
+    viewedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+
     dailyViews: { type: Number, default: 0 },
     weeklyViews: { type: Number, default: 0 },
     monthlyViews: { type: Number, default: 0 },
