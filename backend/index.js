@@ -302,7 +302,7 @@ app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
 
 app.get('/api/novels', async (req, res) => {
     try {
-        const { filter, search, category } = req.query;
+        const { filter, search, category, timeRange } = req.query;
         let query = {};
         let sort = { views: -1 };
         let limit = 20;
@@ -310,14 +310,33 @@ app.get('/api/novels', async (req, res) => {
         if (search) query.$text = { $search: search };
         if (category && category !== 'all') query.category = category;
 
+        // --- تعديل الفلترة والترتيب ---
         if (filter === 'latest_updates') {
             sort = { lastChapterUpdate: -1 };
         } else if (filter === 'latest_added') {
             sort = { createdAt: -1 };
+        } else if (filter === 'featured') {
+            // القسم العلوي: جلب أعلى 3 روايات مشاهدة فقط
+            sort = { views: -1 };
+            limit = 3;
+        } else if (filter === 'trending') {
+            // الأكثر قراءة: الترتيب حسب النطاق الزمني
+            if (timeRange === 'day') sort = { dailyViews: -1 };
+            else if (timeRange === 'week') sort = { weeklyViews: -1 };
+            else if (timeRange === 'month') sort = { monthlyViews: -1 };
+            else sort = { views: -1 };
         }
 
-        const novels = await Novel.find(query).sort(sort).limit(limit);
-        res.json(novels);
+        // جلب الروايات وتحويلها لـ JSON لإضافة حقل عدد الفصول يدوياً
+        const novels = await Novel.find(query).sort(sort).limit(limit).lean();
+        
+        // حل مشكلة عدد الفصول 0: نقوم بحساب طول مصفوفة الفصول لكل رواية
+        const novelsWithCount = novels.map(novel => ({
+            ...novel,
+            chaptersCount: novel.chapters ? novel.chapters.length : 0
+        }));
+
+        res.json(novelsWithCount);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -326,8 +345,12 @@ app.get('/api/novels', async (req, res) => {
 app.get('/api/novels/:id', async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ message: 'Invalid ID' });
-        const novel = await Novel.findById(req.params.id);
+        const novel = await Novel.findById(req.params.id).lean();
         if (!novel) return res.status(404).json({ message: 'Novel not found' });
+        
+        // إضافة عدد الفصول في صفحة التفاصيل أيضاً
+        novel.chaptersCount = novel.chapters ? novel.chapters.length : 0;
+        
         res.json(novel);
     } catch (error) {
         res.status(500).json({ message: error.message });
