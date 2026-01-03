@@ -290,6 +290,7 @@ app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
         // مفتاح المشاهدة الفريد (ايدي المستخدم + رقم الفصل) لمنع التكرار في نفس الفصل
         const viewKey = `${userId}_ch_${chapterNumber}`;
         
+        // ملاحظة: تم تعديل المودل ليقبل String في viewedBy
         const alreadyViewed = novel.viewedBy.includes(viewKey);
 
         if (!alreadyViewed) {
@@ -305,6 +306,7 @@ app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
         }
 
     } catch (error) { 
+        console.error("View Count Error:", error);
         res.status(500).send('Error'); 
     }
 });
@@ -390,7 +392,12 @@ app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
             }
         }
 
-        res.json({ ...chapterMeta.toObject(), content: content });
+        // إرجاع عدد الفصول الكلي مع بيانات الفصل لحل مشكلة "؟" في الواجهة
+        res.json({ 
+            ...chapterMeta.toObject(), 
+            content: content,
+            totalChapters: novel.chapters.length // إضافة عدد الفصول الكلي
+        });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
