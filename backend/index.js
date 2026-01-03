@@ -329,7 +329,13 @@ app.get('/api/novels', async (req, res) => {
         let sort = { views: -1 };
         let limit = parseInt(queryLimit) || 20;
 
-        if (search) query.$text = { $search: search };
+        // تعديل البحث ليكون Regex (Partial Match) بدلاً من Text Search
+        if (search) {
+             query.$or = [
+                 { title: { $regex: search, $options: 'i' } }, // i = case insensitive
+                 { author: { $regex: search, $options: 'i' } }
+             ];
+        }
         
         // تحديث منطق الفلترة: البحث في التصنيف الرئيسي أو العلامات
         if (category && category !== 'all') {
