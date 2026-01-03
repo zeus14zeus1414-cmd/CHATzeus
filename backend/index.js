@@ -244,6 +244,11 @@ app.get('/api/user/stats', verifyToken, async (req, res) => {
 // 🗑️ ADMIN API
 // =========================================================
 app.post('/api/admin/nuke', verifyAdmin, async (req, res) => {
+    // SECURITY CHECK: Only Admin can nuke
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ message: "Access Denied: Admins Only" });
+    }
+
     try {
         await Novel.deleteMany({});
         await NovelLibrary.deleteMany({});
@@ -288,9 +293,19 @@ app.put('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
     try {
         const { title, cover, description, category, tags, status } = req.body;
         
+        const novel = await Novel.findById(req.params.id);
+        if (!novel) return res.status(404).json({ message: "Novel not found" });
+
+        // SECURITY CHECK: Ownership or Admin
+        if (req.user.role !== 'admin') {
+            if (novel.authorEmail !== req.user.email) {
+                return res.status(403).json({ message: "لا تملك صلاحية تعديل هذه الرواية" });
+            }
+        }
+
         let updateData = { title, cover, description, category, tags, status };
 
-        // 🔥🔥🔥 NEW FEATURE: Transfer ownership if Admin edits 🔥🔥🔥
+        // 🔥 Transfer ownership if Admin edits (as requested)
         if (req.user.role === 'admin') {
             updateData.author = req.user.name;
             updateData.authorEmail = req.user.email;
@@ -305,6 +320,16 @@ app.put('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
 
 app.delete('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
     try {
+        const novel = await Novel.findById(req.params.id);
+        if (!novel) return res.status(404).json({ message: "Novel not found" });
+
+        // SECURITY CHECK: Ownership or Admin
+        if (req.user.role !== 'admin') {
+            if (novel.authorEmail !== req.user.email) {
+                return res.status(403).json({ message: "لا تملك صلاحية حذف هذه الرواية" });
+            }
+        }
+
         await Novel.findByIdAndDelete(req.params.id);
         await NovelLibrary.deleteMany({ novelId: req.params.id });
         res.json({ message: "Deleted successfully" });
@@ -322,6 +347,13 @@ app.post('/api/admin/chapters', verifyAdmin, async (req, res) => {
         
         const novel = await Novel.findById(novelId);
         if (!novel) return res.status(404).json({ message: "Novel not found" });
+
+        // SECURITY CHECK: Ownership or Admin
+        if (req.user.role !== 'admin') {
+            if (novel.authorEmail !== req.user.email) {
+                return res.status(403).json({ message: "لا تملك صلاحية الإضافة لهذه الرواية" });
+            }
+        }
 
         if (firestore) {
             await firestore.collection('novels').doc(novelId).collection('chapters').doc(number.toString()).set({
@@ -363,6 +395,13 @@ app.put('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res) =>
         const novel = await Novel.findById(novelId);
         if (!novel) return res.status(404).json({ message: "Novel not found" });
 
+        // SECURITY CHECK: Ownership or Admin
+        if (req.user.role !== 'admin') {
+            if (novel.authorEmail !== req.user.email) {
+                return res.status(403).json({ message: "لا تملك صلاحية تعديل هذا الفصل" });
+            }
+        }
+
         if (firestore) {
             await firestore.collection('novels').doc(novelId).collection('chapters').doc(number.toString()).update({
                 title, content, lastUpdated: new Date()
@@ -386,6 +425,14 @@ app.delete('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res)
     try {
         const { novelId, number } = req.params;
         const novel = await Novel.findById(novelId);
+        if (!novel) return res.status(404).json({ message: "Novel not found" });
+
+        // SECURITY CHECK: Ownership or Admin
+        if (req.user.role !== 'admin') {
+            if (novel.authorEmail !== req.user.email) {
+                return res.status(403).json({ message: "لا تملك صلاحية حذف هذا الفصل" });
+            }
+        }
         
         novel.chapters = novel.chapters.filter(c => c.number != number);
         await novel.save();
