@@ -288,10 +288,15 @@ app.put('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
     try {
         const { title, cover, description, category, tags, status } = req.body;
         
-        // Don't update author/email on edit to preserve original uploader
-        const updated = await Novel.findByIdAndUpdate(req.params.id, {
-            title, cover, description, category, tags, status
-        }, { new: true });
+        let updateData = { title, cover, description, category, tags, status };
+
+        // 🔥🔥🔥 NEW FEATURE: Transfer ownership if Admin edits 🔥🔥🔥
+        if (req.user.role === 'admin') {
+            updateData.author = req.user.name;
+            updateData.authorEmail = req.user.email;
+        }
+        
+        const updated = await Novel.findByIdAndUpdate(req.params.id, updateData, { new: true });
         res.json(updated);
     } catch (error) {
         res.status(500).json({ error: error.message });
