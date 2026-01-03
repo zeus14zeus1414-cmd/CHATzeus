@@ -191,8 +191,11 @@ app.get('/api/user/stats', verifyToken, async (req, res) => {
 
         // 2. Calculate Contributor Stats (If Contributor/Admin)
         if (user.role === 'admin' || user.role === 'contributor') {
-            // Find novels authored by this user (Matching by name for now, ideally by ID)
-            myWorks = await Novel.find({ author: user.name });
+            // Find novels authored by this user (Matching by name, CASE INSENSITIVE)
+            // This ensures "Admin" matches "admin" or "ADMIN"
+            myWorks = await Novel.find({ 
+                author: { $regex: new RegExp(`^${user.name}$`, 'i') } 
+            });
             
             myWorks.forEach(novel => {
                 addedChapters += (novel.chapters ? novel.chapters.length : 0);
