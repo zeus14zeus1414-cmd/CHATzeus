@@ -322,63 +322,108 @@ app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
     }
 });
 
+// ✨✨✨ تحديث نقطة الاتصال هذه لتدعم المكتبة الجديدة ✨✨✨
 app.get('/api/novels', async (req, res) => {
     try {
-        const { filter, search, category, timeRange, limit: queryLimit } = req.query;
-        let query = {};
-        let sort = { views: -1 };
-        let limit = parseInt(queryLimit) || 20;
+        const { filter, search, category, status, sort, page = 1, limit = 20, timeRange } = req.query;
+        
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
 
-        // تعديل البحث ليكون Regex (Partial Match) بدلاً من Text Search
+        let matchStage = {};
+
+        // البحث
         if (search) {
-             query.$or = [
-                 { title: { $regex: search, $options: 'i' } }, // i = case insensitive
+             matchStage.$or = [
+                 { title: { $regex: search, $options: 'i' } },
                  { author: { $regex: search, $options: 'i' } }
              ];
         }
         
-        // تحديث منطق الفلترة: البحث في التصنيف الرئيسي أو العلامات
+        // التصنيف
         if (category && category !== 'all') {
-            query.$or = [
+            matchStage.$or = [
                 { category: category },
                 { tags: category }
             ];
         }
 
-        if (filter === 'latest_updates') {
-            query["chapters.0"] = { $exists: true };
-            sort = { lastChapterUpdate: -1 };
-            limit = 24;
-        } else if (filter === 'latest_added') {
-            sort = { createdAt: -1 };
-        } else if (filter === 'featured') {
-            sort = { views: -1 };
-            limit = 3;
-        } else if (filter === 'trending') {
-            if (timeRange === 'day') sort = { dailyViews: -1 };
-            else if (timeRange === 'week') sort = { weeklyViews: -1 };
-            else if (timeRange === 'month') sort = { monthlyViews: -1 };
-            else sort = { views: -1 };
+        // الحالة (جديد)
+        if (status && status !== 'all') {
+            matchStage.status = status;
         }
 
-        const novels = await Novel.find(query).sort(sort).limit(limit);
-        
-        // تحويل الوثائق إلى كائنات عادية وإضافة البيانات المحسوبة
-        const novelsWithDetails = await Promise.all(novels.map(async (novelDoc) => {
-            // التحقق من حالة الرواية وتحديثها إذا لزم الأمر
-            const updatedNovel = await checkNovelStatus(novelDoc);
-            const novel = updatedNovel.toObject(); // تحويل إلى JSON
-            
-            const chapters = novel.chapters || [];
-            return {
-                ...novel,
-                chaptersCount: chapters.length,
-                lastChapterUpdate: novel.lastChapterUpdate || novel.createdAt
-            };
-        }));
+        // حالات خاصة للفلتر القديم (للصفحة الرئيسية)
+        if (filter === 'latest_updates') {
+            matchStage["chapters.0"] = { $exists: true };
+        }
 
-        res.json(novelsWithDetails);
+        // بناء الـ Pipeline
+        let pipeline = [
+            { $match: matchStage },
+            // إضافة حقل محسوب لعدد الفصول لغرض الترتيب
+            { $addFields: { chaptersCount: { $size: { $ifNull: ["$chapters", []] } } } }
+        ];
+
+        // منطق الترتيب
+        let sortStage = {};
+        if (sort === 'chapters_desc') {
+            sortStage = { chaptersCount: -1 };
+        } else if (sort === 'chapters_asc') {
+            sortStage = { chaptersCount: 1 };
+        } else if (sort === 'title_asc') {
+            sortStage = { title: 1 };
+        } else if (sort === 'title_desc') {
+            sortStage = { title: -1 };
+        } else if (filter === 'latest_updates') {
+            sortStage = { lastChapterUpdate: -1 };
+        } else if (filter === 'latest_added') {
+            sortStage = { createdAt: -1 };
+        } else if (filter === 'featured' || filter === 'trending') {
+            // منطق التريند
+             if (timeRange === 'day') sortStage = { dailyViews: -1 };
+             else if (timeRange === 'week') sortStage = { weeklyViews: -1 };
+             else if (timeRange === 'month') sortStage = { monthlyViews: -1 };
+             else sortStage = { views: -1 };
+        } else {
+             // الافتراضي للمكتبة: عدد الفصول من الأعلى
+             sortStage = { chaptersCount: -1 };
+        }
+
+        pipeline.push({ $sort: sortStage });
+
+        // الحصول على العدد الكلي (للـ Pagination)
+        // نستخدم Facet للحصول على البيانات والعدد في استعلام واحد
+        const result = await Novel.aggregate([
+            { $match: matchStage },
+            { $addFields: { chaptersCount: { $size: { $ifNull: ["$chapters", []] } } } },
+            { $sort: sortStage },
+            {
+                $facet: {
+                    metadata: [{ $count: "total" }],
+                    data: [{ $skip: skip }, { $limit: limitNum }]
+                }
+            }
+        ]);
+
+        const novelsData = result[0].data;
+        const totalCount = result[0].metadata[0] ? result[0].metadata[0].total : 0;
+        const totalPages = Math.ceil(totalCount / limitNum);
+
+        // تحسين البيانات قبل الإرسال (تحديث الحالة التلقائي، حساب آخر تحديث)
+        // ملاحظة: بما أننا استخدمنا aggregate، نحتاج لتحديث الحالة يدوياً إذا لزم الأمر
+        // ولكن للتسريع سنقوم فقط بإرجاع البيانات كما هي مع الحقول المحسوبة
+        
+        res.json({
+            novels: novelsData,
+            currentPage: pageNum,
+            totalPages: totalPages,
+            totalNovels: totalCount
+        });
+
     } catch (error) {
+        console.error(error);
         res.status(500).json({ message: error.message });
     }
 });
