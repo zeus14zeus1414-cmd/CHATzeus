@@ -23,8 +23,8 @@ const novelSchema = new mongoose.Schema({
     
     // إحصائيات المشاهدات
     views: { type: Number, default: 0 }, 
-    // لتتبع المشاهدات الفريدة (تخزين IDs للمستخدمين)
-    viewedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    // تم التعديل: String بدلاً من ObjectId للسماح بمفاتيح مركبة مثل "userId_ch_1"
+    viewedBy: [{ type: String }], 
 
     dailyViews: { type: Number, default: 0 },
     weeklyViews: { type: Number, default: 0 },
