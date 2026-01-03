@@ -147,7 +147,7 @@ app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) =>
 // 👤 USER PROFILE API
 // =========================================================
 
-// Update Profile Info (Name, Bio, Banner, Avatar, Privacy)
+// Update Profile Info
 app.put('/api/user/profile', verifyToken, async (req, res) => {
     try {
         const { name, bio, banner, picture, isHistoryPublic } = req.body;
@@ -171,7 +171,7 @@ app.put('/api/user/profile', verifyToken, async (req, res) => {
     }
 });
 
-// Get User Profile with Stats (Aggregation) - Supports Public Profile by ID/Email
+// Get User Profile with Stats
 app.get('/api/user/stats', verifyToken, async (req, res) => {
     try {
         // Determine target user (Current user OR requested public profile)
@@ -220,6 +220,7 @@ app.get('/api/user/stats', verifyToken, async (req, res) => {
             user: {
                 _id: targetUser._id,
                 name: targetUser.name,
+                email: targetUser.email, // Added Email for Admin View
                 picture: targetUser.picture,
                 banner: targetUser.banner,
                 bio: targetUser.bio,
@@ -239,6 +240,53 @@ app.get('/api/user/stats', verifyToken, async (req, res) => {
     }
 });
 
+
+// =========================================================
+// 👑 USERS MANAGEMENT API (ADMIN ONLY)
+// =========================================================
+
+// Get All Users
+app.get('/api/admin/users', verifyAdmin, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: "Access Denied" });
+    try {
+        const users = await User.find({}).sort({ createdAt: -1 });
+        res.json(users);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update User Role
+app.put('/api/admin/users/:id/role', verifyAdmin, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: "Access Denied" });
+    try {
+        const { role } = req.body;
+        if (!['user', 'contributor', 'admin'].includes(role)) return res.status(400).json({message: "Invalid role"});
+        
+        const user = await User.findByIdAndUpdate(req.params.id, { role }, { new: true });
+        res.json(user);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete User
+app.delete('/api/admin/users/:id', verifyAdmin, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: "Access Denied" });
+    try {
+        // Prevent deleting self
+        if (req.params.id === req.user.id) return res.status(400).json({message: "Cannot delete yourself"});
+
+        await User.findByIdAndDelete(req.params.id);
+        // Optional: Clean up user data like library, etc.
+        await NovelLibrary.deleteMany({ user: req.params.id });
+        await Settings.deleteMany({ user: req.params.id });
+        
+        res.json({ message: "User deleted" });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // =========================================================
 // 🗑️ ADMIN API
@@ -748,7 +796,8 @@ app.get('/auth/google/callback', async (req, res) => {
                 email: userInfo.email,
                 name: userInfo.name,
                 picture: userInfo.picture,
-                role: role
+                role: role,
+                createdAt: new Date() // ✅ Explicitly setting creation date just to be sure
             });
             await user.save();
             await new Settings({ user: user._id }).save();
