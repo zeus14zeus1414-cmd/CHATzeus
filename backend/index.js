@@ -97,10 +97,11 @@ function verifyToken(req, res, next) {
 async function verifyAdmin(req, res, next) {
     verifyToken(req, res, async () => {
         const user = await User.findById(req.user.id);
-        if (user && user.role === 'admin') {
-            next();
+        if (user && (user.role === 'admin' || user.role === 'contributor')) {
+             // السماح للداعمين والمشرفين بالوصول لنقاط النهاية هذه
+             next();
         } else {
-            res.status(403).json({ message: 'Admin access required' });
+            res.status(403).json({ message: 'Admin/Contributor access required' });
         }
     });
 }
@@ -191,10 +192,13 @@ app.get('/api/user/stats', verifyToken, async (req, res) => {
 
         // 2. Calculate Contributor Stats (If Contributor/Admin)
         if (user.role === 'admin' || user.role === 'contributor') {
-            // Find novels authored by this user (Matching by name, CASE INSENSITIVE)
-            // This ensures "Admin" matches "admin" or "ADMIN"
+            // ✨✨✨ التعديل هنا: البحث باستخدام البريد الإلكتروني ✨✨✨
+            // إذا كانت الرواية تحتوي على authorEmail، نستخدمه. إذا لا (روايات قديمة)، نحاول بالاسم.
             myWorks = await Novel.find({ 
-                author: { $regex: new RegExp(`^${user.name}$`, 'i') } 
+                $or: [
+                    { authorEmail: user.email },
+                    { author: { $regex: new RegExp(`^${user.name}$`, 'i') } } // Fallback for old data
+                ]
             });
             
             myWorks.forEach(novel => {
@@ -238,8 +242,15 @@ app.post('/api/admin/novels', verifyAdmin, async (req, res) => {
         const { title, cover, description, translator, category, tags, status } = req.body;
         
         const newNovel = new Novel({
-            title, cover, description, author: translator, category, tags,
-            chapters: [], views: 0, 
+            title, 
+            cover, 
+            description, 
+            author: translator, // الاسم الظاهر
+            authorEmail: req.user.email, // ✨✨✨ الحفظ السحابي بالبريد الإلكتروني ✨✨✨
+            category, 
+            tags,
+            chapters: [], 
+            views: 0, 
             status: status || 'مستمرة'
         });
 
@@ -253,6 +264,7 @@ app.post('/api/admin/novels', verifyAdmin, async (req, res) => {
 app.put('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
     try {
         const { title, cover, description, translator, category, tags, status } = req.body;
+        // عند التحديث، لا نغير authorEmail إلا إذا كنا نريد نقل الملكية (وهو غير متاح هنا حالياً)
         const updated = await Novel.findByIdAndUpdate(req.params.id, {
             title, cover, description, author: translator, category, tags, status
         }, { new: true });
@@ -281,6 +293,11 @@ app.post('/api/admin/chapters', verifyAdmin, async (req, res) => {
         
         const novel = await Novel.findById(novelId);
         if (!novel) return res.status(404).json({ message: "Novel not found" });
+        
+        // تحقق إضافي: هل المستخدم هو صاحب الرواية؟ (اختياري لكن مفضل)
+        // if (novel.authorEmail && novel.authorEmail !== req.user.email && req.user.role !== 'admin') {
+        //    return res.status(403).json({ message: "Unauthorized" });
+        // }
 
         if (firestore) {
             await firestore.collection('novels').doc(novelId).collection('chapters').doc(number.toString()).set({
@@ -362,7 +379,7 @@ app.delete('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res)
 // =========================================================
 // APIs العامة
 // =========================================================
-
+// (باقي الكود كما هو بدون تغيير)
 app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).send('Invalid ID');
@@ -397,7 +414,6 @@ app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
     }
 });
 
-// ✨✨✨ تحديث نقطة الاتصال هذه لتدعم المكتبة الجديدة ✨✨✨
 app.get('/api/novels', async (req, res) => {
     try {
         const { filter, search, category, status, sort, page = 1, limit = 20, timeRange } = req.query;
@@ -429,19 +445,15 @@ app.get('/api/novels', async (req, res) => {
             matchStage.status = status;
         }
 
-        // حالات خاصة للفلتر القديم (للصفحة الرئيسية)
         if (filter === 'latest_updates') {
             matchStage["chapters.0"] = { $exists: true };
         }
 
-        // بناء الـ Pipeline
         let pipeline = [
             { $match: matchStage },
-            // إضافة حقل محسوب لعدد الفصول لغرض الترتيب
             { $addFields: { chaptersCount: { $size: { $ifNull: ["$chapters", []] } } } }
         ];
 
-        // منطق الترتيب
         let sortStage = {};
         if (sort === 'chapters_desc') {
             sortStage = { chaptersCount: -1 };
@@ -456,20 +468,16 @@ app.get('/api/novels', async (req, res) => {
         } else if (filter === 'latest_added') {
             sortStage = { createdAt: -1 };
         } else if (filter === 'featured' || filter === 'trending') {
-            // منطق التريند
              if (timeRange === 'day') sortStage = { dailyViews: -1 };
              else if (timeRange === 'week') sortStage = { weeklyViews: -1 };
              else if (timeRange === 'month') sortStage = { monthlyViews: -1 };
              else sortStage = { views: -1 };
         } else {
-             // الافتراضي للمكتبة: عدد الفصول من الأعلى
              sortStage = { chaptersCount: -1 };
         }
 
         pipeline.push({ $sort: sortStage });
 
-        // الحصول على العدد الكلي (للـ Pagination)
-        // نستخدم Facet للحصول على البيانات والعدد في استعلام واحد
         const result = await Novel.aggregate([
             { $match: matchStage },
             { $addFields: { chaptersCount: { $size: { $ifNull: ["$chapters", []] } } } },
@@ -486,10 +494,6 @@ app.get('/api/novels', async (req, res) => {
         const totalCount = result[0].metadata[0] ? result[0].metadata[0].total : 0;
         const totalPages = Math.ceil(totalCount / limitNum);
 
-        // تحسين البيانات قبل الإرسال (تحديث الحالة التلقائي، حساب آخر تحديث)
-        // ملاحظة: بما أننا استخدمنا aggregate، نحتاج لتحديث الحالة يدوياً إذا لزم الأمر
-        // ولكن للتسريع سنقوم فقط بإرجاع البيانات كما هي مع الحقول المحسوبة
-        
         res.json({
             novels: novelsData,
             currentPage: pageNum,
@@ -510,7 +514,6 @@ app.get('/api/novels/:id', async (req, res) => {
         let novelDoc = await Novel.findById(req.params.id);
         if (!novelDoc) return res.status(404).json({ message: 'Novel not found' });
         
-        // تحديث الحالة عند طلب التفاصيل
         novelDoc = await checkNovelStatus(novelDoc);
         
         const novel = novelDoc.toObject();
@@ -556,7 +559,6 @@ app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
 });
 
 // Library Logic...
-// (باقي الكود كما هو بدون تغييرات جوهرية)
 app.post('/api/novel/update', verifyToken, async (req, res) => {
     try {
         const { novelId, title, cover, author, isFavorite, lastChapterId, lastChapterTitle } = req.body;
