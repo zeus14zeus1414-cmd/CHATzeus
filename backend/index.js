@@ -123,7 +123,7 @@ async function checkNovelStatus(novel) {
 // =========================================================
 // 🖼️ UPLOAD API: رفع الصور إلى Cloudinary
 // =========================================================
-app.post('/api/upload', verifyAdmin, upload.single('image'), async (req, res) => {
+app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
@@ -131,7 +131,7 @@ app.post('/api/upload', verifyAdmin, upload.single('image'), async (req, res) =>
         let dataURI = "data:" + req.file.mimetype + ";base64," + b64;
         
         const result = await cloudinary.uploader.upload(dataURI, {
-            folder: "zeus_novels",
+            folder: "zeus_user_uploads",
             resource_type: "image"
         });
 
@@ -141,6 +141,78 @@ app.post('/api/upload', verifyAdmin, upload.single('image'), async (req, res) =>
         res.status(500).json({ error: error.message });
     }
 });
+
+// =========================================================
+// 👤 USER PROFILE API
+// =========================================================
+
+// Update Profile Info (Name, Bio, Banner, Avatar, Privacy)
+app.put('/api/user/profile', verifyToken, async (req, res) => {
+    try {
+        const { name, bio, banner, picture, isHistoryPublic } = req.body;
+        
+        const updates = {};
+        if (name) updates.name = name;
+        if (bio !== undefined) updates.bio = bio;
+        if (banner) updates.banner = banner;
+        if (picture) updates.picture = picture;
+        if (isHistoryPublic !== undefined) updates.isHistoryPublic = isHistoryPublic;
+
+        const updatedUser = await User.findByIdAndUpdate(
+            req.user.id,
+            { $set: updates },
+            { new: true }
+        );
+
+        res.json(updatedUser);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get User Profile with Stats (Aggregation)
+app.get('/api/user/stats', verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const user = await User.findById(userId);
+
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        // 1. Calculate Read Chapters
+        const libraryStats = await NovelLibrary.aggregate([
+            { $match: { user: new mongoose.Types.ObjectId(userId) } },
+            { $group: { _id: null, totalRead: { $sum: "$maxReadChapterId" } } }
+        ]);
+        const totalReadChapters = libraryStats[0] ? libraryStats[0].totalRead : 0;
+
+        let addedChapters = 0;
+        let totalViews = 0;
+        let myWorks = [];
+
+        // 2. Calculate Contributor Stats (If Contributor/Admin)
+        if (user.role === 'admin' || user.role === 'contributor') {
+            // Find novels authored by this user (Matching by name for now, ideally by ID)
+            myWorks = await Novel.find({ author: user.name });
+            
+            myWorks.forEach(novel => {
+                addedChapters += (novel.chapters ? novel.chapters.length : 0);
+                totalViews += (novel.views || 0);
+            });
+        }
+
+        res.json({
+            readChapters: totalReadChapters,
+            addedChapters,
+            totalViews,
+            myWorks
+        });
+
+    } catch (error) {
+        console.error("Stats Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 // =========================================================
 // 🗑️ ADMIN API
