@@ -105,6 +105,21 @@ async function verifyAdmin(req, res, next) {
     });
 }
 
+// Helper to check and update status automatically
+async function checkNovelStatus(novel) {
+    if (novel.status === 'مكتملة') return novel; // المكتملة لا تتغير
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    // إذا مر 30 يوم والحالة مستمرة، حولها لمتوقفة
+    if (novel.lastChapterUpdate < thirtyDaysAgo && novel.status === 'مستمرة') {
+        novel.status = 'متوقفة';
+        await novel.save();
+    }
+    return novel;
+}
+
 // =========================================================
 // 🖼️ UPLOAD API: رفع الصور إلى Cloudinary
 // =========================================================
@@ -112,7 +127,6 @@ app.post('/api/upload', verifyAdmin, upload.single('image'), async (req, res) =>
     try {
         if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
-        // تحويل البفر إلى Base64 لرفعه إلى Cloudinary
         const b64 = Buffer.from(req.file.buffer).toString('base64');
         let dataURI = "data:" + req.file.mimetype + ";base64," + b64;
         
@@ -146,11 +160,12 @@ app.post('/api/admin/nuke', verifyAdmin, async (req, res) => {
 // =========================================================
 app.post('/api/admin/novels', verifyAdmin, async (req, res) => {
     try {
-        const { title, cover, description, translator, category, tags } = req.body;
+        const { title, cover, description, translator, category, tags, status } = req.body;
         
         const newNovel = new Novel({
             title, cover, description, author: translator, category, tags,
-            chapters: [], views: 0, status: 'مستمرة'
+            chapters: [], views: 0, 
+            status: status || 'مستمرة'
         });
 
         await newNovel.save();
@@ -207,8 +222,14 @@ app.post('/api/admin/chapters', verifyAdmin, async (req, res) => {
             novel.chapters.push(chapterMeta);
         }
         
-        // تحديث تاريخ آخر فصل لترتيب القائمة الحية
+        // تحديث تاريخ آخر فصل
         novel.lastChapterUpdate = new Date();
+        
+        // منطق تحديث الحالة: إذا كانت متوقفة وتم نشر فصل، تصبح مستمرة
+        if (novel.status === 'متوقفة') {
+            novel.status = 'مستمرة';
+        }
+
         novel.markModified('chapters');
         await novel.save();
 
@@ -218,7 +239,6 @@ app.post('/api/admin/chapters', verifyAdmin, async (req, res) => {
     }
 });
 
-// تعديل فصل (عنوان، محتوى)
 app.put('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res) => {
     try {
         const { novelId, number } = req.params;
@@ -227,14 +247,12 @@ app.put('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res) =>
         const novel = await Novel.findById(novelId);
         if (!novel) return res.status(404).json({ message: "Novel not found" });
 
-        // 1. تحديث Firestore (المحتوى والعنوان)
         if (firestore) {
             await firestore.collection('novels').doc(novelId).collection('chapters').doc(number.toString()).update({
                 title, content, lastUpdated: new Date()
             });
         }
 
-        // 2. تحديث MongoDB (العنوان فقط)
         const chapterIndex = novel.chapters.findIndex(c => c.number == number);
         if (chapterIndex > -1) {
             novel.chapters[chapterIndex].title = title;
@@ -270,15 +288,12 @@ app.delete('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res)
 // APIs العامة
 // =========================================================
 
-// تسجيل مشاهدة (تعديل: الآن يزيد العداد مع كل فصل جديد يفتحه المستخدم)
 app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).send('Invalid ID');
         
-        const { chapterNumber } = req.body; // نستقبل رقم الفصل لزيادة المشاهدات بناء عليه
+        const { chapterNumber } = req.body; 
         
-        // إذا لم يتم إرسال رقم الفصل، لا نحتسب المشاهدة (إلا إذا كان تصفح عام للصفحة الرئيسية للرواية)
-        // لكن المستخدم يريد احتساب المشاهدة عند قراءة الفصل
         if (!chapterNumber) {
             return res.status(200).json({ message: 'Chapter number required for view count' });
         }
@@ -287,10 +302,7 @@ app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
         if (!novel) return res.status(404).send('Novel not found');
 
         const userId = req.user.id;
-        // مفتاح المشاهدة الفريد (ايدي المستخدم + رقم الفصل) لمنع التكرار في نفس الفصل
         const viewKey = `${userId}_ch_${chapterNumber}`;
-        
-        // ملاحظة: تم تعديل المودل ليقبل String في viewedBy
         const alreadyViewed = novel.viewedBy.includes(viewKey);
 
         if (!alreadyViewed) {
@@ -304,7 +316,6 @@ app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
         } else {
             return res.status(200).json({ viewed: false, message: 'Already viewed this chapter', total: novel.views });
         }
-
     } catch (error) { 
         console.error("View Count Error:", error);
         res.status(500).send('Error'); 
@@ -319,9 +330,15 @@ app.get('/api/novels', async (req, res) => {
         let limit = parseInt(queryLimit) || 20;
 
         if (search) query.$text = { $search: search };
-        if (category && category !== 'all') query.category = category;
+        
+        // تحديث منطق الفلترة: البحث في التصنيف الرئيسي أو العلامات
+        if (category && category !== 'all') {
+            query.$or = [
+                { category: category },
+                { tags: category }
+            ];
+        }
 
-        // --- تعديل الفلترة والترتيب بناءً على طلبك ---
         if (filter === 'latest_updates') {
             query["chapters.0"] = { $exists: true };
             sort = { lastChapterUpdate: -1 };
@@ -338,16 +355,21 @@ app.get('/api/novels', async (req, res) => {
             else sort = { views: -1 };
         }
 
-        const novels = await Novel.find(query).sort(sort).limit(limit).lean();
+        const novels = await Novel.find(query).sort(sort).limit(limit);
         
-        const novelsWithDetails = novels.map(novel => {
+        // تحويل الوثائق إلى كائنات عادية وإضافة البيانات المحسوبة
+        const novelsWithDetails = await Promise.all(novels.map(async (novelDoc) => {
+            // التحقق من حالة الرواية وتحديثها إذا لزم الأمر
+            const updatedNovel = await checkNovelStatus(novelDoc);
+            const novel = updatedNovel.toObject(); // تحويل إلى JSON
+            
             const chapters = novel.chapters || [];
             return {
                 ...novel,
                 chaptersCount: chapters.length,
                 lastChapterUpdate: novel.lastChapterUpdate || novel.createdAt
             };
-        });
+        }));
 
         res.json(novelsWithDetails);
     } catch (error) {
@@ -358,9 +380,14 @@ app.get('/api/novels', async (req, res) => {
 app.get('/api/novels/:id', async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ message: 'Invalid ID' });
-        const novel = await Novel.findById(req.params.id).lean();
-        if (!novel) return res.status(404).json({ message: 'Novel not found' });
         
+        let novelDoc = await Novel.findById(req.params.id);
+        if (!novelDoc) return res.status(404).json({ message: 'Novel not found' });
+        
+        // تحديث الحالة عند طلب التفاصيل
+        novelDoc = await checkNovelStatus(novelDoc);
+        
+        const novel = novelDoc.toObject();
         novel.chaptersCount = novel.chapters ? novel.chapters.length : 0;
         
         res.json(novel);
@@ -392,24 +419,23 @@ app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
             }
         }
 
-        // إرجاع عدد الفصول الكلي مع بيانات الفصل لحل مشكلة "؟" في الواجهة
         res.json({ 
             ...chapterMeta.toObject(), 
             content: content,
-            totalChapters: novel.chapters.length // إضافة عدد الفصول الكلي
+            totalChapters: novel.chapters.length
         });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 });
 
-// Library Logic with Favorites Counter Sync
+// Library Logic...
+// (باقي الكود كما هو بدون تغييرات جوهرية)
 app.post('/api/novel/update', verifyToken, async (req, res) => {
     try {
         const { novelId, title, cover, author, isFavorite, lastChapterId, lastChapterTitle } = req.body;
         if (!novelId || !mongoose.Types.ObjectId.isValid(novelId)) return res.status(400).json({ message: 'Invalid ID' });
 
-        // جلب الرواية الأصلية لحساب النسبة المئوية بشكل حقيقي
         const originalNovel = await Novel.findById(novelId);
         const totalChapters = originalNovel ? (originalNovel.chapters.length || 1) : 1;
 
@@ -419,11 +445,7 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
 
         if (!libraryItem) {
             libraryItem = new NovelLibrary({ 
-                user: req.user.id, 
-                novelId, 
-                title, 
-                cover, 
-                author, 
+                user: req.user.id, novelId, title, cover, author, 
                 isFavorite: isFavorite || false, 
                 lastChapterId: lastChapterId || 0,
                 maxReadChapterId: lastChapterId || 0,
@@ -440,18 +462,13 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
             if (title) libraryItem.title = title;
             if (cover) libraryItem.cover = cover;
             
-            // تحديث موقع القراءة الحالي (Bookmark)
             if (lastChapterId) {
                 libraryItem.lastChapterId = lastChapterId;
                 libraryItem.lastChapterTitle = lastChapterTitle;
-
-                // تحديث أقصى فصل تم الوصول إليه (للحفاظ على علامات الصح)
                 const currentMax = libraryItem.maxReadChapterId || 0;
                 if (lastChapterId > currentMax) {
                     libraryItem.maxReadChapterId = lastChapterId;
                 }
-                
-                // حساب النسبة المئوية بناءً على أقصى فصل تم قراءته وعدد الفصول الكلي
                 const calculatedProgress = Math.min(100, Math.round((libraryItem.maxReadChapterId / totalChapters) * 100));
                 libraryItem.progress = calculatedProgress;
             }
