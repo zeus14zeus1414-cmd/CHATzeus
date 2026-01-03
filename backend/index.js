@@ -171,17 +171,28 @@ app.put('/api/user/profile', verifyToken, async (req, res) => {
     }
 });
 
-// Get User Profile with Stats (Aggregation)
+// Get User Profile with Stats (Aggregation) - Supports Public Profile by ID/Email
 app.get('/api/user/stats', verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id;
-        const user = await User.findById(userId);
+        // Determine target user (Current user OR requested public profile)
+        let targetUserId = req.user.id;
+        let targetUser = null;
 
-        if (!user) return res.status(404).json({ message: "User not found" });
+        if (req.query.userId) {
+            targetUserId = req.query.userId;
+            targetUser = await User.findById(targetUserId);
+        } else if (req.query.email) {
+            targetUser = await User.findOne({ email: req.query.email });
+            if (targetUser) targetUserId = targetUser._id;
+        } else {
+            targetUser = await User.findById(targetUserId);
+        }
+
+        if (!targetUser) return res.status(404).json({ message: "User not found" });
 
         // 1. Calculate Read Chapters
         const libraryStats = await NovelLibrary.aggregate([
-            { $match: { user: new mongoose.Types.ObjectId(userId) } },
+            { $match: { user: new mongoose.Types.ObjectId(targetUserId) } },
             { $group: { _id: null, totalRead: { $sum: "$maxReadChapterId" } } }
         ]);
         const totalReadChapters = libraryStats[0] ? libraryStats[0].totalRead : 0;
@@ -191,23 +202,31 @@ app.get('/api/user/stats', verifyToken, async (req, res) => {
         let myWorks = [];
 
         // 2. Calculate Contributor Stats (If Contributor/Admin)
-        if (user.role === 'admin' || user.role === 'contributor') {
-            // ✨✨✨ التعديل هنا: البحث باستخدام البريد الإلكتروني ✨✨✨
-            // إذا كانت الرواية تحتوي على authorEmail، نستخدمه. إذا لا (روايات قديمة)، نحاول بالاسم.
-            myWorks = await Novel.find({ 
-                $or: [
-                    { authorEmail: user.email },
-                    { author: { $regex: new RegExp(`^${user.name}$`, 'i') } } // Fallback for old data
-                ]
-            });
-            
-            myWorks.forEach(novel => {
-                addedChapters += (novel.chapters ? novel.chapters.length : 0);
-                totalViews += (novel.views || 0);
-            });
-        }
-
+        // Check works by Email (Preferred) or Name
+        myWorks = await Novel.find({ 
+            $or: [
+                { authorEmail: targetUser.email },
+                { author: { $regex: new RegExp(`^${targetUser.name}$`, 'i') } } 
+            ]
+        });
+        
+        myWorks.forEach(novel => {
+            addedChapters += (novel.chapters ? novel.chapters.length : 0);
+            totalViews += (novel.views || 0);
+        });
+        
+        // Return Public Data Structure
         res.json({
+            user: {
+                _id: targetUser._id,
+                name: targetUser.name,
+                picture: targetUser.picture,
+                banner: targetUser.banner,
+                bio: targetUser.bio,
+                role: targetUser.role,
+                createdAt: targetUser.createdAt,
+                isHistoryPublic: targetUser.isHistoryPublic
+            },
             readChapters: totalReadChapters,
             addedChapters,
             totalViews,
@@ -239,14 +258,18 @@ app.post('/api/admin/nuke', verifyAdmin, async (req, res) => {
 // =========================================================
 app.post('/api/admin/novels', verifyAdmin, async (req, res) => {
     try {
-        const { title, cover, description, translator, category, tags, status } = req.body;
+        const { title, cover, description, category, tags, status } = req.body;
         
+        // Use logged-in user details for author
+        const authorName = req.user.name;
+        const authorEmail = req.user.email;
+
         const newNovel = new Novel({
             title, 
             cover, 
             description, 
-            author: translator, // الاسم الظاهر
-            authorEmail: req.user.email, // ✨✨✨ الحفظ السحابي بالبريد الإلكتروني ✨✨✨
+            author: authorName, // Auto-filled
+            authorEmail: authorEmail, // Auto-filled
             category, 
             tags,
             chapters: [], 
@@ -263,10 +286,11 @@ app.post('/api/admin/novels', verifyAdmin, async (req, res) => {
 
 app.put('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
     try {
-        const { title, cover, description, translator, category, tags, status } = req.body;
-        // عند التحديث، لا نغير authorEmail إلا إذا كنا نريد نقل الملكية (وهو غير متاح هنا حالياً)
+        const { title, cover, description, category, tags, status } = req.body;
+        
+        // Don't update author/email on edit to preserve original uploader
         const updated = await Novel.findByIdAndUpdate(req.params.id, {
-            title, cover, description, author: translator, category, tags, status
+            title, cover, description, category, tags, status
         }, { new: true });
         res.json(updated);
     } catch (error) {
@@ -293,11 +317,6 @@ app.post('/api/admin/chapters', verifyAdmin, async (req, res) => {
         
         const novel = await Novel.findById(novelId);
         if (!novel) return res.status(404).json({ message: "Novel not found" });
-        
-        // تحقق إضافي: هل المستخدم هو صاحب الرواية؟ (اختياري لكن مفضل)
-        // if (novel.authorEmail && novel.authorEmail !== req.user.email && req.user.role !== 'admin') {
-        //    return res.status(403).json({ message: "Unauthorized" });
-        // }
 
         if (firestore) {
             await firestore.collection('novels').doc(novelId).collection('chapters').doc(number.toString()).set({
@@ -635,7 +654,7 @@ app.get('/api/novel/status/:novelId', verifyToken, async (req, res) => {
     res.json(item || { isFavorite: false, progress: 0, lastChapterId: 0, maxReadChapterId: 0 });
 });
 
-// AUTH
+// AUTH (Remaining code unchanged)
 const oauth2Client = new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
