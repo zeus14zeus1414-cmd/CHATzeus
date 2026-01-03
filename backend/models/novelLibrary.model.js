@@ -6,9 +6,10 @@ const novelLibrarySchema = new mongoose.Schema({
     title: { type: String },
     cover: { type: String },
     author: { type: String },
-    lastChapterId: { type: Number }, // Changed to Number to match your app logic
+    lastChapterId: { type: Number }, // The bookmark (where to resume)
+    maxReadChapterId: { type: Number, default: 0 }, // The furthest chapter read (for checkmarks)
     lastChapterTitle: { type: String },
-    progress: { type: Number, default: 0 },
+    progress: { type: Number, default: 0 }, // Percentage 0-100
     isFavorite: { type: Boolean, default: false },
     lastReadAt: { type: Date, default: Date.now }
 }, { timestamps: true });
