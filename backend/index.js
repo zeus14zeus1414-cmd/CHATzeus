@@ -276,12 +276,19 @@ app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).send('Invalid ID');
         
         const { chapterNumber } = req.body; // نستقبل رقم الفصل لزيادة المشاهدات بناء عليه
+        
+        // إذا لم يتم إرسال رقم الفصل، لا نحتسب المشاهدة (إلا إذا كان تصفح عام للصفحة الرئيسية للرواية)
+        // لكن المستخدم يريد احتساب المشاهدة عند قراءة الفصل
+        if (!chapterNumber) {
+            return res.status(200).json({ message: 'Chapter number required for view count' });
+        }
+
         const novel = await Novel.findById(req.params.id);
         if (!novel) return res.status(404).send('Novel not found');
 
         const userId = req.user.id;
         // مفتاح المشاهدة الفريد (ايدي المستخدم + رقم الفصل) لمنع التكرار في نفس الفصل
-        const viewKey = `${userId}_ch_${chapterNumber || 'general'}`;
+        const viewKey = `${userId}_ch_${chapterNumber}`;
         
         const alreadyViewed = novel.viewedBy.includes(viewKey);
 
@@ -392,15 +399,30 @@ app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
 // Library Logic with Favorites Counter Sync
 app.post('/api/novel/update', verifyToken, async (req, res) => {
     try {
-        const { novelId, title, cover, author, isFavorite, progress, lastChapterId, lastChapterTitle } = req.body;
+        const { novelId, title, cover, author, isFavorite, lastChapterId, lastChapterTitle } = req.body;
         if (!novelId || !mongoose.Types.ObjectId.isValid(novelId)) return res.status(400).json({ message: 'Invalid ID' });
+
+        // جلب الرواية الأصلية لحساب النسبة المئوية بشكل حقيقي
+        const originalNovel = await Novel.findById(novelId);
+        const totalChapters = originalNovel ? (originalNovel.chapters.length || 1) : 1;
 
         let libraryItem = await NovelLibrary.findOne({ user: req.user.id, novelId });
         let isNewFavorite = false;
         let isRemovedFavorite = false;
 
         if (!libraryItem) {
-            libraryItem = new NovelLibrary({ user: req.user.id, novelId, title, cover, author, isFavorite: isFavorite || false, progress: progress || 0, lastChapterId, lastChapterTitle });
+            libraryItem = new NovelLibrary({ 
+                user: req.user.id, 
+                novelId, 
+                title, 
+                cover, 
+                author, 
+                isFavorite: isFavorite || false, 
+                lastChapterId: lastChapterId || 0,
+                maxReadChapterId: lastChapterId || 0,
+                lastChapterTitle,
+                progress: lastChapterId ? Math.round((lastChapterId / totalChapters) * 100) : 0
+            });
             if (isFavorite) isNewFavorite = true;
         } else {
             if (isFavorite !== undefined) {
@@ -411,12 +433,20 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
             if (title) libraryItem.title = title;
             if (cover) libraryItem.cover = cover;
             
-            // تحديث التقدم (يُفترض أن يرسل التطبيق النسبة المئوية 0-100)
-            if (progress !== undefined) libraryItem.progress = progress;
-            
+            // تحديث موقع القراءة الحالي (Bookmark)
             if (lastChapterId) {
                 libraryItem.lastChapterId = lastChapterId;
                 libraryItem.lastChapterTitle = lastChapterTitle;
+
+                // تحديث أقصى فصل تم الوصول إليه (للحفاظ على علامات الصح)
+                const currentMax = libraryItem.maxReadChapterId || 0;
+                if (lastChapterId > currentMax) {
+                    libraryItem.maxReadChapterId = lastChapterId;
+                }
+                
+                // حساب النسبة المئوية بناءً على أقصى فصل تم قراءته وعدد الفصول الكلي
+                const calculatedProgress = Math.min(100, Math.round((libraryItem.maxReadChapterId / totalChapters) * 100));
+                libraryItem.progress = calculatedProgress;
             }
             libraryItem.lastReadAt = new Date();
         }
@@ -429,7 +459,10 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
         }
 
         res.json(libraryItem);
-    } catch (error) { res.status(500).json({ message: 'Failed' }); }
+    } catch (error) { 
+        console.error(error);
+        res.status(500).json({ message: 'Failed' }); 
+    }
 });
 
 app.get('/api/novel/library', verifyToken, async (req, res) => {
@@ -447,7 +480,7 @@ app.get('/api/novel/library', verifyToken, async (req, res) => {
 
 app.get('/api/novel/status/:novelId', verifyToken, async (req, res) => {
     const item = await NovelLibrary.findOne({ user: req.user.id, novelId: req.params.novelId });
-    res.json(item || { isFavorite: false, progress: 0 });
+    res.json(item || { isFavorite: false, progress: 0, lastChapterId: 0, maxReadChapterId: 0 });
 });
 
 // AUTH
