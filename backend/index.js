@@ -1,5 +1,4 @@
 
-
 // =================================================================
 // 1. التحميل اليدوي لمتغيرات البيئة
 // =================================================================
@@ -495,7 +494,8 @@ app.put('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
 
 app.delete('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
     try {
-        const novel = await Novel.findById(req.params.id);
+        const novelId = req.params.id;
+        const novel = await Novel.findById(novelId);
         if (!novel) return res.status(404).json({ message: "Novel not found" });
 
         // SECURITY CHECK: Ownership or Admin
@@ -505,9 +505,35 @@ app.delete('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
             }
         }
 
-        await Novel.findByIdAndDelete(req.params.id);
-        await NovelLibrary.deleteMany({ novelId: req.params.id });
-        res.json({ message: "Deleted successfully" });
+        // 1. Delete content from Firestore (Chapters)
+        // يتم حذف جميع المستندات في المجموعة الفرعية 'chapters' المرتبطة بالرواية
+        if (firestore) {
+            try {
+                const chaptersRef = firestore.collection('novels').doc(novelId).collection('chapters');
+                const snapshot = await chaptersRef.get();
+                
+                // Firestore لا يدعم حذف المجموعة مباشرة، يجب حذف المستندات داخلها
+                if (!snapshot.empty) {
+                    const deletePromises = snapshot.docs.map(doc => doc.ref.delete());
+                    await Promise.all(deletePromises);
+                }
+                
+                // حذف مستند الرواية نفسه من Firestore
+                await firestore.collection('novels').doc(novelId).delete();
+                console.log(`✅ Deleted Firestore content for novel: ${novelId}`);
+            } catch (fsError) {
+                console.error("❌ Firestore deletion error:", fsError);
+                // لا نوقف العملية، نستمر بحذف البيانات من MongoDB
+            }
+        }
+
+        // 2. Delete from MongoDB
+        await Novel.findByIdAndDelete(novelId);
+        
+        // 3. Delete from User Libraries
+        await NovelLibrary.deleteMany({ novelId: novelId });
+        
+        res.json({ message: "Deleted successfully (DB + Content)" });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -625,7 +651,7 @@ app.delete('/api/admin/chapters/:novelId/:number', verifyAdmin, async (req, res)
 // =========================================================
 // APIs العامة
 // =========================================================
-// (باقي الكود كما هو بدون تغيير)
+
 app.post('/api/novels/:id/view', verifyToken, async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).send('Invalid ID');
@@ -898,7 +924,65 @@ app.get('/api/novel/status/:novelId', verifyToken, async (req, res) => {
     res.json(item || { isFavorite: false, progress: 0, lastChapterId: 0, maxReadChapterId: 0 });
 });
 
-// AUTH (Remaining code unchanged)
+// =========================================================
+// 🔔 NOTIFICATIONS API
+// =========================================================
+app.get('/api/notifications', verifyToken, async (req, res) => {
+    try {
+        // 1. Get user's favorite novels from library
+        const favorites = await NovelLibrary.find({ user: req.user.id, isFavorite: true });
+        
+        if (!favorites || favorites.length === 0) {
+            return res.json({ notifications: [], totalUnread: 0 });
+        }
+
+        const favIds = favorites.map(f => f.novelId);
+        
+        // 2. Get the actual novels to check chapter counts
+        const novels = await Novel.find({ _id: { $in: favIds } })
+            .select('title cover chapters lastChapterUpdate')
+            .sort({ lastChapterUpdate: -1 })
+            .lean();
+
+        let notifications = [];
+        let totalUnread = 0;
+
+        // 3. Compare and build notification list
+        novels.forEach(novel => {
+            const libraryEntry = favorites.find(f => f.novelId.toString() === novel._id.toString());
+            const userReadCount = libraryEntry.maxReadChapterId || 0;
+            const totalChapters = novel.chapters ? novel.chapters.length : 0;
+            
+            // If there are new chapters
+            if (totalChapters > userReadCount) {
+                const diff = totalChapters - userReadCount;
+                const lastChapter = novel.chapters[novel.chapters.length - 1];
+                
+                notifications.push({
+                    _id: novel._id,
+                    title: novel.title,
+                    cover: novel.cover,
+                    newChaptersCount: diff,
+                    lastChapterNumber: lastChapter ? lastChapter.number : 0,
+                    lastChapterTitle: lastChapter ? lastChapter.title : '',
+                    updatedAt: novel.lastChapterUpdate
+                });
+                
+                totalUnread += diff;
+            }
+        });
+
+        res.json({ notifications, totalUnread });
+
+    } catch (error) {
+        console.error("Notifications Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// =========================================================
+// AUTH
+// =========================================================
 const oauth2Client = new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
