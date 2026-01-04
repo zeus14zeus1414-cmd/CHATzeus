@@ -1,3 +1,4 @@
+
 // =================================================================
 // 1. التحميل اليدوي لمتغيرات البيئة
 // =================================================================
@@ -738,10 +739,27 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
 
 app.get('/api/novel/library', verifyToken, async (req, res) => {
     try {
-        const { type } = req.query; 
-        let query = { user: req.user.id };
+        const { type, userId } = req.query; 
+        
+        let targetId = req.user.id;
+        
+        // Handle viewing other user's library
+        if (userId) {
+            const targetUser = await User.findById(userId);
+            if (!targetUser) return res.status(404).json({ message: "User not found" });
+            
+            // Check privacy: If not self AND history is private -> return empty
+            // Note: Favorites might be considered public usually, but History should be guarded
+            if (userId !== req.user.id && !targetUser.isHistoryPublic && type === 'history') {
+                 return res.json([]); 
+            }
+            targetId = userId;
+        }
+
+        let query = { user: targetId };
         if (type === 'favorites') query.isFavorite = true;
         else if (type === 'history') query.progress = { $gt: 0 };
+        
         const items = await NovelLibrary.find(query).sort({ lastReadAt: -1 });
         res.json(items);
     } catch (error) {
