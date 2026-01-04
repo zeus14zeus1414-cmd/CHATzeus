@@ -1,4 +1,5 @@
 
+
 // =================================================================
 // 1. التحميل اليدوي لمتغيرات البيئة
 // =================================================================
@@ -25,6 +26,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const multer = require('multer'); // إضافة Multer لرفع الملفات
+const AdmZip = require('adm-zip'); // إضافة مكتبة فك الضغط
 
 // --- Config Imports ---
 let firestore, cloudinary;
@@ -143,6 +145,130 @@ app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) =>
         res.status(500).json({ error: error.message });
     }
 });
+
+// =========================================================
+// 🚀 BULK UPLOAD API (النشر المتعدد)
+// =========================================================
+app.post('/api/admin/chapters/bulk-upload', verifyAdmin, upload.single('zip'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ message: "No ZIP file uploaded" });
+        const { novelId } = req.body;
+        
+        if (!novelId) return res.status(400).json({ message: "Novel ID required" });
+
+        const novel = await Novel.findById(novelId);
+        if (!novel) return res.status(404).json({ message: "Novel not found" });
+
+        // التحقق من الصلاحية
+        if (req.user.role !== 'admin') {
+            if (novel.authorEmail !== req.user.email) {
+                return res.status(403).json({ message: "لا تملك صلاحية النشر لهذه الرواية" });
+            }
+        }
+
+        // فك الضغط
+        const zip = new AdmZip(req.file.buffer);
+        const zipEntries = zip.getEntries(); // an array of ZipEntry records
+        
+        let successCount = 0;
+        let errors = [];
+        
+        // استخدام Batch للكتابة في Firebase لتحسين الأداء (أو حلقة متتابعة)
+        // سنستخدم حلقة متتابعة لضمان التحديث الصحيح في Mongo
+        
+        for (const entry of zipEntries) {
+            if (entry.isDirectory || !entry.entryName.endsWith('.txt')) continue;
+
+            try {
+                // 1. استخراج رقم الفصل من اسم الملف (مثال: 10.txt)
+                const fileName = path.basename(entry.entryName, '.txt');
+                const chapterNumber = parseInt(fileName);
+
+                if (isNaN(chapterNumber)) {
+                    errors.push(`تخطي الملف ${entry.entryName}: الاسم ليس رقماً`);
+                    continue;
+                }
+
+                // 2. قراءة المحتوى
+                const fullText = zip.readAsText(entry, 'utf8'); // تأكد من استخدام UTF8
+                const lines = fullText.split('\n');
+                
+                if (lines.length === 0) continue;
+
+                // 3. استخراج العنوان (السطر الأول بعد النقطتين)
+                const firstLine = lines[0].trim();
+                let chapterTitle = firstLine;
+                
+                // البحث عن أول نقطتين (:) وأخذ ما بعدها
+                const colonIndex = firstLine.indexOf(':');
+                if (colonIndex > -1) {
+                    chapterTitle = firstLine.substring(colonIndex + 1).trim();
+                }
+                
+                // إذا كان العنوان فارغاً بعد القص، استخدم السطر كاملاً كاحتياط
+                if (!chapterTitle) chapterTitle = firstLine;
+
+                // باقي النص هو المحتوى
+                const content = lines.slice(1).join('\n').trim();
+
+                // 4. الحفظ في Firebase Firestore (المحتوى فقط)
+                if (firestore) {
+                    await firestore.collection('novels').doc(novelId).collection('chapters').doc(chapterNumber.toString()).set({
+                        title: chapterTitle,
+                        content: content,
+                        lastUpdated: new Date()
+                    });
+                } else {
+                    throw new Error("Firebase not configured");
+                }
+
+                // 5. تحديث الميتا داتا في MongoDB (بدون المحتوى)
+                const chapterMeta = { 
+                    number: chapterNumber, 
+                    title: chapterTitle, 
+                    createdAt: new Date(), 
+                    views: 0 
+                };
+
+                const existingIndex = novel.chapters.findIndex(c => c.number === chapterNumber);
+                if (existingIndex > -1) {
+                    // تحديث الفصل الموجود
+                    novel.chapters[existingIndex].title = chapterTitle;
+                } else {
+                    // إضافة فصل جديد
+                    novel.chapters.push(chapterMeta);
+                }
+
+                successCount++;
+
+            } catch (err) {
+                console.error(`Error processing ${entry.entryName}:`, err);
+                errors.push(`خطأ في ملف ${entry.entryName}`);
+            }
+        }
+
+        if (successCount > 0) {
+            // ترتيب الفصول بعد الإضافة
+            novel.chapters.sort((a, b) => a.number - b.number);
+            
+            novel.lastChapterUpdate = new Date();
+            if (novel.status === 'متوقفة') novel.status = 'مستمرة';
+            
+            await novel.save();
+        }
+
+        res.json({ 
+            message: `تمت المعالجة. نجح: ${successCount}، فشل: ${errors.length}`,
+            errors: errors,
+            successCount
+        });
+
+    } catch (error) {
+        console.error("Bulk Upload Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 // =========================================================
 // 👤 USER PROFILE API
