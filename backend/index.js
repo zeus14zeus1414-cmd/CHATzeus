@@ -124,6 +124,51 @@ async function checkNovelStatus(novel) {
 }
 
 // =========================================================
+// 🧪 TEST AUTH API (للاختبار فقط)
+// =========================================================
+app.post('/auth/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        
+        if (!email) return res.status(400).json({ message: "البريد الإلكتروني مطلوب" });
+
+        // بما أن هذا للاختبار، سنبحث عن المستخدم أو ننشئه إذا لم يكن موجوداً
+        // كلمة المرور لا يتم التحقق منها فعلياً هنا لتسريع الاختبار
+        
+        let user = await User.findOne({ email });
+        let role = 'user';
+        
+        // منح صلاحيات الأدمن لهذا الإيميل تلقائياً للاختبار
+        if (email === ADMIN_EMAIL) {
+            role = 'admin';
+        }
+
+        if (!user) {
+            // إنشاء مستخدم جديد للاختبار
+            user = new User({
+                googleId: `test_${Date.now()}`, // Fake ID
+                email: email,
+                name: email.split('@')[0], // الاسم من الإيميل
+                picture: '',
+                role: role,
+                createdAt: new Date()
+            });
+            await user.save();
+            await new Settings({ user: user._id }).save();
+        }
+
+        // إنشاء التوكن
+        const payload = { id: user._id, googleId: user.googleId, name: user.name, email: user.email, role: user.role };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '365d' });
+
+        res.json({ token, user });
+    } catch (error) {
+        console.error("Test Login Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// =========================================================
 // 🖼️ UPLOAD API: رفع الصور إلى Cloudinary
 // =========================================================
 app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) => {
