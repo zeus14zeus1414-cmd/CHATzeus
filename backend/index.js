@@ -361,10 +361,11 @@ app.get('/api/user/stats', verifyToken, async (req, res) => {
 
         if (!targetUser) return res.status(404).json({ message: "User not found" });
 
-        // 1. Calculate Read Chapters
+        // 1. Calculate Read Chapters (Sum length of readChapters arrays)
         const libraryStats = await NovelLibrary.aggregate([
             { $match: { user: new mongoose.Types.ObjectId(targetUserId) } },
-            { $group: { _id: null, totalRead: { $sum: "$maxReadChapterId" } } }
+            { $project: { readCount: { $size: { $ifNull: ["$readChapters", []] } } } },
+            { $group: { _id: null, totalRead: { $sum: "$readCount" } } }
         ]);
         const totalReadChapters = libraryStats[0] ? libraryStats[0].totalRead : 0;
 
@@ -441,19 +442,58 @@ app.put('/api/admin/users/:id/role', verifyAdmin, async (req, res) => {
     }
 });
 
-// Delete User
+// Delete User (UPDATED: Conditionally deletes Novels based on query param)
 app.delete('/api/admin/users/:id', verifyAdmin, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ message: "Access Denied" });
     try {
-        // Prevent deleting self
-        if (req.params.id === req.user.id) return res.status(400).json({message: "Cannot delete yourself"});
+        const targetUserId = req.params.id;
+        const deleteContent = req.query.deleteContent === 'true'; // Check flag from frontend
 
-        await User.findByIdAndDelete(req.params.id);
-        // Optional: Clean up user data like library, etc.
-        await NovelLibrary.deleteMany({ user: req.params.id });
-        await Settings.deleteMany({ user: req.params.id });
+        // Prevent deleting self
+        if (targetUserId === req.user.id) return res.status(400).json({message: "Cannot delete yourself"});
+
+        const targetUser = await User.findById(targetUserId);
+        if (!targetUser) return res.status(404).json({ message: "User not found" });
+
+        // 1. Conditionally Delete Novels authored by this user
+        if (deleteContent) {
+            const userNovels = await Novel.find({ authorEmail: targetUser.email });
+            
+            // Delete chapters from Firestore for each novel
+            if (firestore && userNovels.length > 0) {
+                for (const novel of userNovels) {
+                    try {
+                        const chaptersRef = firestore.collection('novels').doc(novel._id.toString()).collection('chapters');
+                        const snapshot = await chaptersRef.get();
+                        if (!snapshot.empty) {
+                            const deletePromises = snapshot.docs.map(doc => doc.ref.delete());
+                            await Promise.all(deletePromises);
+                        }
+                        await firestore.collection('novels').doc(novel._id.toString()).delete();
+                    } catch (err) {
+                        console.error(`Error deleting firestore for novel ${novel._id}`, err);
+                    }
+                }
+            }
+
+            // Delete Novels from Mongo
+            await Novel.deleteMany({ authorEmail: targetUser.email });
+        }
+
+        // 2. Delete User Data
+        await User.findByIdAndDelete(targetUserId);
         
-        res.json({ message: "User deleted" });
+        // 3. Delete Library entries related to this user (User's personal library)
+        await NovelLibrary.deleteMany({ user: targetUserId });
+        
+        // 4. Delete Settings
+        await Settings.deleteMany({ user: targetUserId });
+        
+        res.json({ 
+            message: deleteContent 
+                ? "User and their works deleted successfully" 
+                : "User deleted successfully (works preserved)" 
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -875,7 +915,7 @@ app.get('/api/novels/:novelId/chapters/:chapterId', async (req, res) => {
     }
 });
 
-// Library Logic...
+// Library Logic (UPDATED)
 app.post('/api/novel/update', verifyToken, async (req, res) => {
     try {
         const { novelId, title, cover, author, isFavorite, lastChapterId, lastChapterTitle } = req.body;
@@ -893,9 +933,9 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
                 user: req.user.id, novelId, title, cover, author, 
                 isFavorite: isFavorite || false, 
                 lastChapterId: lastChapterId || 0,
-                maxReadChapterId: lastChapterId || 0,
+                readChapters: lastChapterId ? [lastChapterId] : [], // Initialize with current chapter
                 lastChapterTitle,
-                progress: lastChapterId ? Math.round((lastChapterId / totalChapters) * 100) : 0
+                progress: lastChapterId ? Math.round((1 / totalChapters) * 100) : 0
             });
             if (isFavorite) isNewFavorite = true;
         } else {
@@ -910,12 +950,13 @@ app.post('/api/novel/update', verifyToken, async (req, res) => {
             if (lastChapterId) {
                 libraryItem.lastChapterId = lastChapterId;
                 libraryItem.lastChapterTitle = lastChapterTitle;
-                const currentMax = libraryItem.maxReadChapterId || 0;
-                if (lastChapterId > currentMax) {
-                    libraryItem.maxReadChapterId = lastChapterId;
-                }
-                const calculatedProgress = Math.min(100, Math.round((libraryItem.maxReadChapterId / totalChapters) * 100));
-                libraryItem.progress = calculatedProgress;
+                
+                // Add to specific read chapters list (No duplication)
+                libraryItem.readChapters.addToSet(lastChapterId);
+                
+                // Calculate progress based on unique chapters read
+                const readCount = libraryItem.readChapters.length;
+                libraryItem.progress = Math.min(100, Math.round((readCount / totalChapters) * 100));
             }
             libraryItem.lastReadAt = new Date();
         }
@@ -966,7 +1007,9 @@ app.get('/api/novel/library', verifyToken, async (req, res) => {
 
 app.get('/api/novel/status/:novelId', verifyToken, async (req, res) => {
     const item = await NovelLibrary.findOne({ user: req.user.id, novelId: req.params.novelId });
-    res.json(item || { isFavorite: false, progress: 0, lastChapterId: 0, maxReadChapterId: 0 });
+    // Include readChapters in response for frontend check
+    const readChapters = item ? item.readChapters : [];
+    res.json(item || { isFavorite: false, progress: 0, lastChapterId: 0, readChapters: [] });
 });
 
 // =========================================================
@@ -995,7 +1038,8 @@ app.get('/api/notifications', verifyToken, async (req, res) => {
         // 3. Compare and build notification list
         novels.forEach(novel => {
             const libraryEntry = favorites.find(f => f.novelId.toString() === novel._id.toString());
-            const userReadCount = libraryEntry.maxReadChapterId || 0;
+            // Using actual read count
+            const userReadCount = libraryEntry.readChapters ? libraryEntry.readChapters.length : 0;
             const totalChapters = novel.chapters ? novel.chapters.length : 0;
             
             // If there are new chapters
