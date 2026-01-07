@@ -1,3 +1,4 @@
+
 const mongoose = require('mongoose');
 
 const novelLibrarySchema = new mongoose.Schema({
@@ -7,7 +8,8 @@ const novelLibrarySchema = new mongoose.Schema({
     cover: { type: String },
     author: { type: String },
     lastChapterId: { type: Number }, // The bookmark (where to resume)
-    maxReadChapterId: { type: Number, default: 0 }, // The furthest chapter read (for checkmarks)
+    maxReadChapterId: { type: Number, default: 0 }, // Kept for legacy support/sorting
+    readChapters: [{ type: Number }], // ✨ New: Array to store specifically read chapter numbers
     lastChapterTitle: { type: String },
     progress: { type: Number, default: 0 }, // Percentage 0-100
     isFavorite: { type: Boolean, default: false },
