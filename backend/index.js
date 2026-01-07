@@ -138,21 +138,47 @@ app.get('/api/novels/:novelId/comments', async (req, res) => {
         
         let sortOption = { createdAt: -1 }; // Newest
         if (sort === 'oldest') sortOption = { createdAt: 1 };
-        if (sort === 'best') sortOption = { likes: -1 }; // Rough approximation
+        if (sort === 'best') sortOption = { likes: -1 }; 
 
-        // Fetch top-level comments only (parentId: null)
+        // Fetch top-level comments
         const comments = await Comment.find({ novelId, parentId: null })
             .populate('user', 'name picture role')
-            .populate({ path: 'replyCount' }) // Virtual populate count
+            .populate({ path: 'replyCount' })
             .sort(sortOption)
             .skip((page - 1) * limit)
             .limit(parseInt(limit));
 
-        // Get total count for UI
+        // Get total count
         const totalComments = await Comment.countDocuments({ novelId });
 
-        res.json({ comments, totalComments });
+        // 🔥🔥🔥 Aggregation for Real Stats 🔥🔥🔥
+        // تجميع كل التفاعلات من جميع التعليقات لهذه الرواية
+        const statsAggregation = await Comment.aggregate([
+            { $match: { novelId: new mongoose.Types.ObjectId(novelId) } },
+            { $group: {
+                _id: null,
+                totalLikes: { $sum: { $size: { $ifNull: ["$likes", []] } } }, // عدد اللايكات الكلي
+                love: { $sum: "$reactions.love" },
+                funny: { $sum: "$reactions.funny" },
+                sad: { $sum: "$reactions.sad" },
+                angry: { $sum: "$reactions.angry" },
+                wow: { $sum: "$reactions.wow" }
+            }}
+        ]);
+
+        const stats = statsAggregation.length > 0 ? statsAggregation[0] : {
+            totalLikes: 0, love: 0, funny: 0, sad: 0, angry: 0, wow: 0
+        };
+
+        const totalReactions = stats.totalLikes + stats.love + stats.funny + stats.sad + stats.angry + stats.wow;
+
+        res.json({ 
+            comments, 
+            totalComments,
+            stats: { ...stats, totalReactions } // Return real stats
+        });
     } catch (error) {
+        console.error(error);
         res.status(500).json({ error: error.message });
     }
 });
