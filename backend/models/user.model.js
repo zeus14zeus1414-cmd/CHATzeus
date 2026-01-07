@@ -4,12 +4,13 @@ const mongoose = require('mongoose');
 const userSchema = new mongoose.Schema({
     googleId: { type: String, required: true, unique: true },
     email: { type: String, required: true, unique: true },
-    name: { type: String, required: true, unique: true }, // جعل الاسم فريداً
-    picture: { type: String }, // Avatar
-    banner: { type: String, default: '' }, // Profile Cover
-    bio: { type: String, default: '' }, // User Bio
-    isHistoryPublic: { type: Boolean, default: true }, // History Privacy
-    role: { type: String, default: 'user', enum: ['user', 'admin', 'contributor'] } // Roles
+    name: { type: String, required: true, unique: true }, 
+    picture: { type: String }, 
+    banner: { type: String, default: '' }, 
+    bio: { type: String, default: '' }, 
+    isHistoryPublic: { type: Boolean, default: true }, 
+    isCommentBlocked: { type: Boolean, default: false }, // 🔥 New: Block from commenting only
+    role: { type: String, default: 'user', enum: ['user', 'admin', 'contributor'] } 
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
