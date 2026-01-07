@@ -222,10 +222,13 @@ app.get('/api/novels/:novelId/comments', async (req, res) => {
             .skip((page - 1) * limit)
             .limit(parseInt(limit));
 
+        // 🔥 Fix for Deleted Users: Filter out comments where user is null (prevents frontend crash)
+        const validComments = comments.filter(c => c.user !== null);
+
         const totalComments = await Comment.countDocuments(query);
 
         res.json({ 
-            comments, 
+            comments: validComments, 
             totalComments,
             stats 
         });
@@ -240,7 +243,9 @@ app.get('/api/comments/:commentId/replies', async (req, res) => {
         const replies = await Comment.find({ parentId: req.params.commentId })
             .populate('user', 'name picture role')
             .sort({ createdAt: 1 });
-        res.json(replies);
+        
+        // Filter null users here too
+        res.json(replies.filter(r => r.user !== null));
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -270,6 +275,30 @@ app.post('/api/comments', verifyToken, async (req, res) => {
         await newComment.populate('user', 'name picture role');
 
         res.json(newComment);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 🔥 Update Comment (Edit)
+app.put('/api/comments/:commentId', verifyToken, async (req, res) => {
+    try {
+        const { content } = req.body;
+        const comment = await Comment.findById(req.params.commentId);
+        
+        if (!comment) return res.status(404).json({message: "Comment not found"});
+        
+        // Ensure ownership
+        if (comment.user.toString() !== req.user.id) {
+            return res.status(403).json({message: "Unauthorized"});
+        }
+
+        comment.content = content;
+        comment.isEdited = true;
+        await comment.save();
+        
+        await comment.populate('user', 'name picture role');
+        res.json(comment);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -338,8 +367,6 @@ app.put('/api/admin/users/:id/block-comment', verifyAdmin, async (req, res) => {
     }
 });
 
-// ... (Rest of existing APIs: Test Auth, Upload, Bulk Upload, Profile, Admin, etc.) ...
-// Keep existing code below this line intact (omitted for brevity as per instructions to only update files)
 
 // =========================================================
 // 🧪 TEST AUTH API (للاختبار فقط)
@@ -414,9 +441,6 @@ app.post('/api/upload', verifyToken, upload.single('image'), async (req, res) =>
         res.status(500).json({ error: error.message });
     }
 });
-
-// ... (Bulk Upload, Profile, Admin User, Nuke, Novels, Chapters, View, Update, Notifications, Auth) ...
-// Ensure all original code exists here. I will just close the module exports.
 
 // =========================================================
 // 🚀 BULK UPLOAD API (النشر المتعدد)
@@ -523,9 +547,6 @@ app.post('/api/admin/chapters/bulk-upload', verifyAdmin, upload.single('zip'), a
     }
 });
 
-// ... All other endpoints (Profile, Admin, Auth) ...
-// (Implied to be here)
-
 // =========================================================
 // 👤 USER PROFILE API
 // =========================================================
@@ -627,9 +648,6 @@ app.get('/api/user/stats', verifyToken, async (req, res) => {
     }
 });
 
-// ... (Rest of Admin API, Novels API, Library Logic, Notifications, Auth) ... 
-// Just ensuring the structure is valid.
-
 // =========================================================
 // 👑 USERS MANAGEMENT API (ADMIN ONLY)
 // =========================================================
@@ -671,6 +689,9 @@ app.delete('/api/admin/users/:id', verifyAdmin, async (req, res) => {
         const targetUser = await User.findById(targetUserId);
         if (!targetUser) return res.status(404).json({ message: "User not found" });
 
+        // 🔥🔥🔥 Important: Delete Comments when user is deleted 🔥🔥🔥
+        await Comment.deleteMany({ user: targetUserId });
+
         if (deleteContent) {
             const userNovels = await Novel.find({ authorEmail: targetUser.email });
             
@@ -699,15 +720,13 @@ app.delete('/api/admin/users/:id', verifyAdmin, async (req, res) => {
         
         res.json({ 
             message: deleteContent 
-                ? "User and their works deleted successfully" 
-                : "User deleted successfully (works preserved)" 
+                ? "User and their works/comments deleted successfully" 
+                : "User and comments deleted successfully (works preserved)" 
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
-
-// ... (Other endpoints) ...
 
 // =========================================================
 // 📝 ADMIN API: الروايات
@@ -803,8 +822,6 @@ app.delete('/api/admin/novels/:id', verifyAdmin, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
-// ... (Chapters API, View, etc.) ...
 
 app.post('/api/admin/chapters', verifyAdmin, async (req, res) => {
     try {
