@@ -14,7 +14,7 @@ const commentSchema = new mongoose.Schema({
     likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     dislikes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     
-    // ردود الفعل التعبيرية (مثل الصورة)
+    // ردود الفعل التعبيرية
     reactions: {
         love: { type: Number, default: 0 },
         funny: { type: Number, default: 0 },
@@ -24,6 +24,7 @@ const commentSchema = new mongoose.Schema({
     },
 
     isSpoiler: { type: Boolean, default: false },
+    isEdited: { type: Boolean, default: false }, // 🔥 New: Track if edited
     createdAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 
