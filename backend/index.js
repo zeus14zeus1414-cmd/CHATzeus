@@ -24,8 +24,8 @@ const { OAuth2Client } = require('google-auth-library');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
-const multer = require('multer'); // إضافة Multer لرفع الملفات
-const AdmZip = require('adm-zip'); // إضافة مكتبة فك الضغط
+const multer = require('multer'); 
+const AdmZip = require('adm-zip'); 
 
 // --- Config Imports ---
 let firestore, cloudinary;
@@ -42,14 +42,12 @@ const User = require('./models/user.model.js');
 const Novel = require('./models/novel.model.js');
 const NovelLibrary = require('./models/novelLibrary.model.js'); 
 const Settings = require('./models/settings.model.js');
-const Comment = require('./models/comment.model.js'); // 🔥 Import Comment Model
+const Comment = require('./models/comment.model.js');
 
 const app = express();
 
-// 🔥 قائمة الأدمن المسموح بهم حصراً 🔥
 const ADMIN_EMAILS = ["flaf.aboode@gmail.com", "zeus", "zeus@gmail.com"];
 
-// إعداد Multer للتعامل مع رفع الصور في الذاكرة
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
@@ -103,7 +101,6 @@ async function verifyAdmin(req, res, next) {
     verifyToken(req, res, async () => {
         const user = await User.findById(req.user.id);
         if (user && (user.role === 'admin' || user.role === 'contributor')) {
-             // السماح للداعمين والمشرفين بالوصول لنقاط النهاية هذه
              next();
         } else {
             res.status(403).json({ message: 'Admin/Contributor access required' });
@@ -111,14 +108,12 @@ async function verifyAdmin(req, res, next) {
     });
 }
 
-// Helper to check and update status automatically
 async function checkNovelStatus(novel) {
-    if (novel.status === 'مكتملة') return novel; // المكتملة لا تتغير
+    if (novel.status === 'مكتملة') return novel; 
 
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    // إذا مر 30 يوم والحالة مستمرة، حولها لمتوقفة
     if (novel.lastChapterUpdate < thirtyDaysAgo && novel.status === 'مستمرة') {
         novel.status = 'متوقفة';
         await novel.save();
@@ -127,79 +122,143 @@ async function checkNovelStatus(novel) {
 }
 
 // =========================================================
-// 💬 COMMENTS API (نظام التعليقات الجديد)
+// 🎭 NOVEL REACTIONS API (New)
+// =========================================================
+app.post('/api/novels/:novelId/react', verifyToken, async (req, res) => {
+    try {
+        const { type } = req.body; // 'like', 'love', 'funny', 'sad', 'angry'
+        const validTypes = ['like', 'love', 'funny', 'sad', 'angry'];
+        
+        if (!validTypes.includes(type)) return res.status(400).json({message: "Invalid reaction type"});
+
+        const novel = await Novel.findById(req.params.novelId);
+        if (!novel) return res.status(404).json({message: "Novel not found"});
+
+        const userId = req.user.id;
+
+        // Initialize reactions object if it doesn't exist (migration)
+        if (!novel.reactions) {
+            novel.reactions = { like: [], love: [], funny: [], sad: [], angry: [] };
+        }
+
+        // Logic: Toggle the selected reaction. 
+        // OPTIONAL: If you want user to have ONLY ONE reaction at a time, remove from others.
+        // Here we allow removing from others to keep it clean (1 reaction per user).
+        
+        let added = false;
+
+        // Check if user already has this specific reaction
+        if (novel.reactions[type].includes(userId)) {
+            // Remove it (Toggle OFF)
+            novel.reactions[type].pull(userId);
+        } else {
+            // Remove user from ALL other reactions first (Single Choice)
+            validTypes.forEach(t => {
+                if (novel.reactions[t].includes(userId)) {
+                    novel.reactions[t].pull(userId);
+                }
+            });
+            // Add new reaction (Toggle ON)
+            novel.reactions[type].push(userId);
+            added = true;
+        }
+
+        await novel.save();
+
+        // Calculate counts
+        const stats = {
+            like: novel.reactions.like.length,
+            love: novel.reactions.love.length,
+            funny: novel.reactions.funny.length,
+            sad: novel.reactions.sad.length,
+            angry: novel.reactions.angry.length,
+            userReaction: added ? type : null // Return what the user currently has
+        };
+
+        res.json(stats);
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// =========================================================
+// 💬 COMMENTS API
 // =========================================================
 
-// Get Comments for a Novel
-app.get('/api/novels/:novelId/comments', async (req, res) => {
+// Get Comments & Novel Stats
+app.get('/api/novels/:novelId/comments', verifyToken, async (req, res) => {
     try {
         const { novelId } = req.params;
         const { sort = 'newest', page = 1, limit = 20 } = req.query;
         
-        let sortOption = { createdAt: -1 }; // Newest
+        // 1. Get Novel Stats (Reactions)
+        const novel = await Novel.findById(novelId).select('reactions');
+        let stats = { like: 0, love: 0, funny: 0, sad: 0, angry: 0, total: 0, userReaction: null };
+        
+        if (novel && novel.reactions) {
+            stats.like = novel.reactions.like?.length || 0;
+            stats.love = novel.reactions.love?.length || 0;
+            stats.funny = novel.reactions.funny?.length || 0;
+            stats.sad = novel.reactions.sad?.length || 0;
+            stats.angry = novel.reactions.angry?.length || 0;
+            stats.total = stats.like + stats.love + stats.funny + stats.sad + stats.angry;
+
+            // Check if current user reacted
+            if (req.user) {
+                ['like', 'love', 'funny', 'sad', 'angry'].forEach(t => {
+                    if (novel.reactions[t]?.includes(req.user.id)) {
+                        stats.userReaction = t;
+                    }
+                });
+            }
+        }
+
+        // 2. Get Comments
+        let sortOption = { createdAt: -1 };
         if (sort === 'oldest') sortOption = { createdAt: 1 };
         if (sort === 'best') sortOption = { likes: -1 }; 
 
-        // Fetch top-level comments
         const comments = await Comment.find({ novelId, parentId: null })
-            .populate('user', 'name picture role')
+            .populate('user', 'name picture role isCommentBlocked') // Include blocked status
             .populate({ path: 'replyCount' })
             .sort(sortOption)
             .skip((page - 1) * limit)
             .limit(parseInt(limit));
 
-        // Get total count
         const totalComments = await Comment.countDocuments({ novelId });
-
-        // 🔥🔥🔥 Aggregation for Real Stats 🔥🔥🔥
-        // تجميع كل التفاعلات من جميع التعليقات لهذه الرواية
-        const statsAggregation = await Comment.aggregate([
-            { $match: { novelId: new mongoose.Types.ObjectId(novelId) } },
-            { $group: {
-                _id: null,
-                totalLikes: { $sum: { $size: { $ifNull: ["$likes", []] } } }, // عدد اللايكات الكلي
-                love: { $sum: "$reactions.love" },
-                funny: { $sum: "$reactions.funny" },
-                sad: { $sum: "$reactions.sad" },
-                angry: { $sum: "$reactions.angry" },
-                wow: { $sum: "$reactions.wow" }
-            }}
-        ]);
-
-        const stats = statsAggregation.length > 0 ? statsAggregation[0] : {
-            totalLikes: 0, love: 0, funny: 0, sad: 0, angry: 0, wow: 0
-        };
-
-        const totalReactions = stats.totalLikes + stats.love + stats.funny + stats.sad + stats.angry + stats.wow;
 
         res.json({ 
             comments, 
             totalComments,
-            stats: { ...stats, totalReactions } // Return real stats
+            stats 
         });
     } catch (error) {
-        console.error(error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// Get Replies for a Comment
 app.get('/api/comments/:commentId/replies', async (req, res) => {
     try {
         const replies = await Comment.find({ parentId: req.params.commentId })
             .populate('user', 'name picture role')
-            .sort({ createdAt: 1 }); // Oldest first for conversation flow
+            .sort({ createdAt: 1 });
         res.json(replies);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// Post a Comment (or Reply)
 app.post('/api/comments', verifyToken, async (req, res) => {
     try {
         const { novelId, content, parentId } = req.body;
         
+        // 🔥 Check if user is blocked from commenting
+        const currentUser = await User.findById(req.user.id);
+        if (currentUser.isCommentBlocked) {
+            return res.status(403).json({ message: "أنت ممنوع من التعليق." });
+        }
+
         if (!content || !content.trim()) return res.status(400).json({message: "Content required"});
 
         const newComment = new Comment({
@@ -210,8 +269,6 @@ app.post('/api/comments', verifyToken, async (req, res) => {
         });
 
         await newComment.save();
-        
-        // Populate user details immediately for frontend update
         await newComment.populate('user', 'name picture role');
 
         res.json(newComment);
@@ -220,28 +277,23 @@ app.post('/api/comments', verifyToken, async (req, res) => {
     }
 });
 
-// Like/Dislike Comment
 app.post('/api/comments/:commentId/action', verifyToken, async (req, res) => {
     try {
-        const { action } = req.body; // 'like' or 'dislike'
+        const { action } = req.body; 
         const userId = req.user.id;
         const comment = await Comment.findById(req.params.commentId);
         
         if (!comment) return res.status(404).json({message: "Comment not found"});
 
         if (action === 'like') {
-            // Remove from dislikes if exists
             comment.dislikes.pull(userId);
-            // Toggle like
             if (comment.likes.includes(userId)) {
                 comment.likes.pull(userId);
             } else {
                 comment.likes.addToSet(userId);
             }
         } else if (action === 'dislike') {
-            // Remove from likes if exists
             comment.likes.pull(userId);
-            // Toggle dislike
             if (comment.dislikes.includes(userId)) {
                 comment.dislikes.pull(userId);
             } else {
@@ -256,22 +308,31 @@ app.post('/api/comments/:commentId/action', verifyToken, async (req, res) => {
     }
 });
 
-// Delete Comment
 app.delete('/api/comments/:commentId', verifyToken, async (req, res) => {
     try {
         const comment = await Comment.findById(req.params.commentId);
         if (!comment) return res.status(404).json({message: "Not found"});
 
-        // Allow deletion if owner OR admin
         if (comment.user.toString() !== req.user.id && req.user.role !== 'admin') {
             return res.status(403).json({message: "Unauthorized"});
         }
 
-        // Also delete all replies
         await Comment.deleteMany({ parentId: comment._id });
         await Comment.findByIdAndDelete(req.params.commentId);
 
         res.json({ message: "Deleted" });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 🔥 Block User Comments Endpoint
+app.put('/api/admin/users/:id/block-comment', verifyAdmin, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: "Access Denied" });
+    try {
+        const { block } = req.body; // true or false
+        const user = await User.findByIdAndUpdate(req.params.id, { isCommentBlocked: block }, { new: true });
+        res.json({ message: block ? "User blocked from comments" : "User unblocked", user });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
