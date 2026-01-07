@@ -42,6 +42,7 @@ const User = require('./models/user.model.js');
 const Novel = require('./models/novel.model.js');
 const NovelLibrary = require('./models/novelLibrary.model.js'); 
 const Settings = require('./models/settings.model.js');
+const Comment = require('./models/comment.model.js'); // 🔥 Import Comment Model
 
 const app = express();
 
@@ -126,6 +127,132 @@ async function checkNovelStatus(novel) {
 }
 
 // =========================================================
+// 💬 COMMENTS API (نظام التعليقات الجديد)
+// =========================================================
+
+// Get Comments for a Novel
+app.get('/api/novels/:novelId/comments', async (req, res) => {
+    try {
+        const { novelId } = req.params;
+        const { sort = 'newest', page = 1, limit = 20 } = req.query;
+        
+        let sortOption = { createdAt: -1 }; // Newest
+        if (sort === 'oldest') sortOption = { createdAt: 1 };
+        if (sort === 'best') sortOption = { likes: -1 }; // Rough approximation
+
+        // Fetch top-level comments only (parentId: null)
+        const comments = await Comment.find({ novelId, parentId: null })
+            .populate('user', 'name picture role')
+            .populate({ path: 'replyCount' }) // Virtual populate count
+            .sort(sortOption)
+            .skip((page - 1) * limit)
+            .limit(parseInt(limit));
+
+        // Get total count for UI
+        const totalComments = await Comment.countDocuments({ novelId });
+
+        res.json({ comments, totalComments });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get Replies for a Comment
+app.get('/api/comments/:commentId/replies', async (req, res) => {
+    try {
+        const replies = await Comment.find({ parentId: req.params.commentId })
+            .populate('user', 'name picture role')
+            .sort({ createdAt: 1 }); // Oldest first for conversation flow
+        res.json(replies);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Post a Comment (or Reply)
+app.post('/api/comments', verifyToken, async (req, res) => {
+    try {
+        const { novelId, content, parentId } = req.body;
+        
+        if (!content || !content.trim()) return res.status(400).json({message: "Content required"});
+
+        const newComment = new Comment({
+            novelId,
+            user: req.user.id,
+            content: content.trim(),
+            parentId: parentId || null
+        });
+
+        await newComment.save();
+        
+        // Populate user details immediately for frontend update
+        await newComment.populate('user', 'name picture role');
+
+        res.json(newComment);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Like/Dislike Comment
+app.post('/api/comments/:commentId/action', verifyToken, async (req, res) => {
+    try {
+        const { action } = req.body; // 'like' or 'dislike'
+        const userId = req.user.id;
+        const comment = await Comment.findById(req.params.commentId);
+        
+        if (!comment) return res.status(404).json({message: "Comment not found"});
+
+        if (action === 'like') {
+            // Remove from dislikes if exists
+            comment.dislikes.pull(userId);
+            // Toggle like
+            if (comment.likes.includes(userId)) {
+                comment.likes.pull(userId);
+            } else {
+                comment.likes.addToSet(userId);
+            }
+        } else if (action === 'dislike') {
+            // Remove from likes if exists
+            comment.likes.pull(userId);
+            // Toggle dislike
+            if (comment.dislikes.includes(userId)) {
+                comment.dislikes.pull(userId);
+            } else {
+                comment.dislikes.addToSet(userId);
+            }
+        }
+
+        await comment.save();
+        res.json({ likes: comment.likes.length, dislikes: comment.dislikes.length });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete Comment
+app.delete('/api/comments/:commentId', verifyToken, async (req, res) => {
+    try {
+        const comment = await Comment.findById(req.params.commentId);
+        if (!comment) return res.status(404).json({message: "Not found"});
+
+        // Allow deletion if owner OR admin
+        if (comment.user.toString() !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({message: "Unauthorized"});
+        }
+
+        // Also delete all replies
+        await Comment.deleteMany({ parentId: comment._id });
+        await Comment.findByIdAndDelete(req.params.commentId);
+
+        res.json({ message: "Deleted" });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+// =========================================================
 // 🧪 TEST AUTH API (للاختبار فقط)
 // =========================================================
 app.post('/auth/login', async (req, res) => {
@@ -144,20 +271,12 @@ app.post('/auth/login', async (req, res) => {
         }
 
         if (!user) {
-            // محاولة إنشاء اسم مستخدم من الإيميل
+            // التحقق من الاسم وتعديله ليكون فريداً
             let proposedName = email.split('@')[0];
-            
-            // 🔥 التحقق من تكرار الاسم 🔥
-            const existingNameUser = await User.findOne({ name: proposedName });
-            if (existingNameUser) {
-                // إذا كان الاسم "zeus" مأخوذاً، لن نسمح لشخص آخر بأخذه
-                // في حالة الاختبار، سنقوم بإضافة رقم عشوائي، أو إرجاع خطأ حسب رغبتك
-                // بما أنك طلبت "لا يستطيع شخص آخر تسمية نفسه"، سنرجع خطأ إذا كان الاسم zeus
-                if (proposedName.toLowerCase() === 'zeus') {
-                     return res.status(400).json({ message: "اسم المستخدم zeus محجوز، لا يمكن استخدامه." });
-                }
-                // لغير zeus، نضيف أرقام لتسهيل الاختبار
-                proposedName = `${proposedName}_${Math.floor(Math.random() * 1000)}`;
+            let counter = 1;
+            while(await User.findOne({ name: proposedName })) {
+                proposedName = `${email.split('@')[0]}_${counter}`;
+                counter++;
             }
 
             user = new User({
@@ -171,7 +290,6 @@ app.post('/auth/login', async (req, res) => {
             await user.save();
             await new Settings({ user: user._id }).save();
         } else {
-            // إذا كان المستخدم موجوداً وهو ضمن القائمة المسموحة، تأكد أنه أدمن
             if (role === 'admin' && user.role !== 'admin') {
                 user.role = 'admin';
                 await user.save();
