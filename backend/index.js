@@ -44,7 +44,9 @@ const NovelLibrary = require('./models/novelLibrary.model.js');
 const Settings = require('./models/settings.model.js');
 
 const app = express();
-const ADMIN_EMAIL = "flaf.aboode@gmail.com"; 
+
+// 🔥 قائمة الأدمن المسموح بهم حصراً 🔥
+const ADMIN_EMAILS = ["flaf.aboode@gmail.com", "zeus", "zeus@gmail.com"];
 
 // إعداد Multer للتعامل مع رفع الصور في الذاكرة
 const storage = multer.memoryStorage();
@@ -135,18 +137,33 @@ app.post('/auth/login', async (req, res) => {
         let user = await User.findOne({ email });
         let role = 'user';
         
-        // 🔥🔥🔥 تحديث: جعل zeus أدمن دائماً 🔥🔥🔥
+        // 🔥 تحديث: التحقق الصارم من الإيميل فقط للأدمن 🔥
         const lowerEmail = email.toLowerCase();
-        if (lowerEmail === ADMIN_EMAIL || lowerEmail.startsWith('zeus')) {
+        if (ADMIN_EMAILS.includes(lowerEmail)) {
             role = 'admin';
         }
 
         if (!user) {
-            // إنشاء مستخدم جديد للاختبار
+            // محاولة إنشاء اسم مستخدم من الإيميل
+            let proposedName = email.split('@')[0];
+            
+            // 🔥 التحقق من تكرار الاسم 🔥
+            const existingNameUser = await User.findOne({ name: proposedName });
+            if (existingNameUser) {
+                // إذا كان الاسم "zeus" مأخوذاً، لن نسمح لشخص آخر بأخذه
+                // في حالة الاختبار، سنقوم بإضافة رقم عشوائي، أو إرجاع خطأ حسب رغبتك
+                // بما أنك طلبت "لا يستطيع شخص آخر تسمية نفسه"، سنرجع خطأ إذا كان الاسم zeus
+                if (proposedName.toLowerCase() === 'zeus') {
+                     return res.status(400).json({ message: "اسم المستخدم zeus محجوز، لا يمكن استخدامه." });
+                }
+                // لغير zeus، نضيف أرقام لتسهيل الاختبار
+                proposedName = `${proposedName}_${Math.floor(Math.random() * 1000)}`;
+            }
+
             user = new User({
-                googleId: `test_${Date.now()}`, // Fake ID
+                googleId: `test_${Date.now()}`, 
                 email: email,
-                name: email.split('@')[0], // الاسم من الإيميل
+                name: proposedName, 
                 picture: '',
                 role: role,
                 createdAt: new Date()
@@ -154,14 +171,13 @@ app.post('/auth/login', async (req, res) => {
             await user.save();
             await new Settings({ user: user._id }).save();
         } else {
-            // إذا كان المستخدم موجوداً وكان اسمه zeus، قم بترقيته إذا لم يكن أدمن
+            // إذا كان المستخدم موجوداً وهو ضمن القائمة المسموحة، تأكد أنه أدمن
             if (role === 'admin' && user.role !== 'admin') {
                 user.role = 'admin';
                 await user.save();
             }
         }
 
-        // إنشاء التوكن
         const payload = { id: user._id, googleId: user.googleId, name: user.name, email: user.email, role: user.role };
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '365d' });
 
@@ -318,7 +334,16 @@ app.put('/api/user/profile', verifyToken, async (req, res) => {
         const { name, bio, banner, picture, isHistoryPublic } = req.body;
         
         const updates = {};
-        if (name) updates.name = name;
+        
+        // التحقق من الاسم إذا تم تغييره
+        if (name && name !== req.user.name) {
+             const existing = await User.findOne({ name: name });
+             if (existing) {
+                 return res.status(400).json({ message: "اسم المستخدم هذا مستخدم بالفعل." });
+             }
+             updates.name = name;
+        }
+        
         if (bio !== undefined) updates.bio = bio;
         if (banner) updates.banner = banner;
         if (picture) updates.picture = picture;
@@ -1068,15 +1093,23 @@ app.get('/auth/google/callback', async (req, res) => {
         
         // 🔥🔥🔥 تحديث: جعل zeus أدمن دائماً (Google Login) 🔥🔥🔥
         const lowerEmail = userInfo.email.toLowerCase();
-        if (lowerEmail === ADMIN_EMAIL || lowerEmail.startsWith('zeus')) {
+        if (ADMIN_EMAILS.includes(lowerEmail)) {
             role = 'admin';
         }
 
         if (!user) {
+            // التحقق من الاسم وتعديله ليكون فريداً
+            let proposedName = userInfo.name;
+            let counter = 1;
+            while(await User.findOne({ name: proposedName })) {
+                proposedName = `${userInfo.name}_${counter}`;
+                counter++;
+            }
+
             user = new User({
                 googleId: userInfo.sub,
                 email: userInfo.email,
-                name: userInfo.name,
+                name: proposedName,
                 picture: userInfo.picture,
                 role: role,
                 createdAt: new Date() 
