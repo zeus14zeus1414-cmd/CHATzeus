@@ -3,6 +3,9 @@ const mongoose = require('mongoose');
 
 const commentSchema = new mongoose.Schema({
     novelId: { type: mongoose.Schema.Types.ObjectId, ref: 'Novel', required: true, index: true },
+    // 🔥 New: Chapter Number (Optional). If null, it's a general novel review.
+    chapterNumber: { type: Number, default: null, index: true },
+    
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     content: { type: String, required: true },
     parentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Comment', default: null, index: true }, // للردود
