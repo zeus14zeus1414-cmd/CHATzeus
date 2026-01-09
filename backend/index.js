@@ -50,6 +50,8 @@ const ScraperLogSchema = new mongoose.Schema({
     type: { type: String, default: 'info' }, // info, success, error, warning
     timestamp: { type: Date, default: Date.now }
 });
+// حذف النموذج القديم إذا وجد لتجنب التعارض
+if (mongoose.models.ScraperLog) delete mongoose.models.ScraperLog;
 const ScraperLog = mongoose.model('ScraperLog', ScraperLogSchema);
 
 const app = express();
@@ -98,8 +100,8 @@ app.use(async (req, res, next) => {
 // Helper Function for Logging to DB
 async function logScraper(message, type = 'info') {
     try {
-        console.log(`[Scraper] ${message}`);
-        await ScraperLog.create({ message, type });
+        console.log(`[Scraper Log] ${message}`);
+        await ScraperLog.create({ message, type, timestamp: new Date() });
         // Keep only last 100 logs to save space
         const count = await ScraperLog.countDocuments();
         if (count > 100) {
@@ -153,15 +155,8 @@ async function checkNovelStatus(novel) {
 // =========================================================
 // 📜 SCRAPER LOGS API
 // =========================================================
-app.get('/api/scraper/logs', async (req, res) => {
-    try {
-        const logs = await ScraperLog.find().sort({ timestamp: -1 }).limit(50);
-        res.json(logs);
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
 
+// مسح السجلات
 app.delete('/api/scraper/logs', async (req, res) => {
     try {
         await ScraperLog.deleteMany({});
@@ -171,11 +166,51 @@ app.delete('/api/scraper/logs', async (req, res) => {
     }
 });
 
+// جلب السجلات
+app.get('/api/scraper/logs', async (req, res) => {
+    try {
+        const logs = await ScraperLog.find().sort({ timestamp: -1 }).limit(100);
+        res.json(logs);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ✅ نقطة البداية (Init) - لضمان استجابة فورية
+app.post('/api/scraper/init', async (req, res) => {
+    try {
+        const { url, userEmail } = req.body;
+        await ScraperLog.deleteMany({}); // تنظيف القديم
+        
+        if (userEmail) {
+            const user = await User.findOne({ email: userEmail });
+            if (user) await logScraper(`👤 المستخدم: ${user.name}`, 'info');
+        }
+
+        await logScraper(`🚀 بدء عملية استيراد جديدة...`, 'info');
+        await logScraper(`🔗 الرابط المستهدف: ${url}`, 'info');
+        await logScraper(`⏳ جاري الاتصال بخدمة السحب (Python Scraper)...`, 'warning');
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ✅ تسجيل خطأ من العميل (App) إذا فشل الاتصال بالسكرابر
+app.post('/api/scraper/log', async (req, res) => {
+    try {
+        const { message, type } = req.body;
+        await logScraper(message, type || 'info');
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // =========================================================
 // 🕷️ SCRAPER WEBHOOK (بوابة استقبال البيانات من السكرابر)
 // =========================================================
 app.post('/api/scraper/receive', async (req, res) => {
-    // 1. التحقق من الرقم السري (نفس الموجود في AutoImportScreen.js)
     const secret = req.headers['authorization'] || req.headers['x-api-secret'];
     const VALID_SECRET = 'Zeusndndjddnejdjdjdejekk29393838msmskxcm9239484jdndjdnddjj99292938338zeuslojdnejxxmejj82283849';
     
@@ -185,9 +220,15 @@ app.post('/api/scraper/receive', async (req, res) => {
     }
 
     try {
-        const { adminEmail, novelData, chapters } = req.body;
+        const { adminEmail, novelData, chapters, error } = req.body;
 
-        await logScraper(`📥 استلام بيانات من السكرابر للرواية: ${novelData?.title || 'بدون عنوان'}`, 'info');
+        // إذا أرسل السكرابر خطأ
+        if (error) {
+            await logScraper(`❌ خطأ من السكرابر: ${error}`, 'error');
+            return res.status(400).json({ message: error });
+        }
+
+        await logScraper(`📥 وصل رد من السكرابر! تحليل البيانات...`, 'info');
 
         if (!adminEmail || !novelData || !novelData.title) {
             await logScraper("❌ بيانات ناقصة في الطلب", 'error');
@@ -201,14 +242,12 @@ app.post('/api/scraper/receive', async (req, res) => {
             return res.status(404).json({ message: `User with email ${adminEmail} not found` });
         }
 
-        await logScraper(`👤 تم تحديد الناشر: ${user.name}`, 'success');
-
         // 3. البحث عن الرواية أو إنشاؤها
         let novel = await Novel.findOne({ title: novelData.title });
 
         if (!novel) {
             // إنشاء رواية جديدة
-            await logScraper(`🆕 جاري إنشاء رواية جديدة: ${novelData.title}`, 'info');
+            await logScraper(`✨ جاري إنشاء رواية جديدة: ${novelData.title}`, 'info');
             novel = new Novel({
                 title: novelData.title,
                 cover: novelData.cover,
@@ -238,7 +277,7 @@ app.post('/api/scraper/receive', async (req, res) => {
         // 4. معالجة الفصول وإضافتها
         if (chapters && Array.isArray(chapters) && chapters.length > 0) {
             let addedCount = 0;
-            await logScraper(`📚 جاري معالجة ${chapters.length} فصل...`, 'info');
+            // await logScraper(`📚 جاري معالجة ${chapters.length} فصل...`, 'info');
 
             for (const chap of chapters) {
                 // التأكد من عدم تكرار الفصل
@@ -271,7 +310,7 @@ app.post('/api/scraper/receive', async (req, res) => {
                 novel.chapters.sort((a, b) => a.number - b.number);
                 novel.lastChapterUpdate = new Date();
                 await novel.save();
-                await logScraper(`💾 تم حفظ ${addedCount} فصل جديد في قاعدة البيانات`, 'success');
+                await logScraper(`✅ تم حفظ ${addedCount} فصل جديد في قاعدة البيانات`, 'success');
             } else {
                 await logScraper(`⚠️ جميع الفصول المرسلة موجودة مسبقاً`, 'warning');
             }
