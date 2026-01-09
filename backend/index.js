@@ -44,6 +44,14 @@ const NovelLibrary = require('./models/novelLibrary.model.js');
 const Settings = require('./models/settings.model.js');
 const Comment = require('./models/comment.model.js'); // 🔥 Import Comment Model
 
+// 🔥 MODEL FOR SCRAPER LOGS (للتتبع المباشر)
+const ScraperLogSchema = new mongoose.Schema({
+    message: String,
+    type: { type: String, default: 'info' }, // info, success, error, warning
+    timestamp: { type: Date, default: Date.now }
+});
+const ScraperLog = mongoose.model('ScraperLog', ScraperLogSchema);
+
 const app = express();
 
 // 🔥 قائمة الأدمن المسموح بهم حصراً 🔥
@@ -87,6 +95,22 @@ app.use(async (req, res, next) => {
     }
 });
 
+// Helper Function for Logging to DB
+async function logScraper(message, type = 'info') {
+    try {
+        console.log(`[Scraper] ${message}`);
+        await ScraperLog.create({ message, type });
+        // Keep only last 100 logs to save space
+        const count = await ScraperLog.countDocuments();
+        if (count > 100) {
+            const first = await ScraperLog.findOne().sort({ timestamp: 1 });
+            if (first) await ScraperLog.deleteOne({ _id: first._id });
+        }
+    } catch (e) {
+        console.error("Log error", e);
+    }
+}
+
 function verifyToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -127,6 +151,27 @@ async function checkNovelStatus(novel) {
 }
 
 // =========================================================
+// 📜 SCRAPER LOGS API
+// =========================================================
+app.get('/api/scraper/logs', async (req, res) => {
+    try {
+        const logs = await ScraperLog.find().sort({ timestamp: -1 }).limit(50);
+        res.json(logs);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/scraper/logs', async (req, res) => {
+    try {
+        await ScraperLog.deleteMany({});
+        res.json({ message: "Logs cleared" });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// =========================================================
 // 🕷️ SCRAPER WEBHOOK (بوابة استقبال البيانات من السكرابر)
 // =========================================================
 app.post('/api/scraper/receive', async (req, res) => {
@@ -135,29 +180,35 @@ app.post('/api/scraper/receive', async (req, res) => {
     const VALID_SECRET = 'Zeusndndjddnejdjdjdejekk29393838msmskxcm9239484jdndjdnddjj99292938338zeuslojdnejxxmejj82283849';
     
     if (secret !== VALID_SECRET) {
+        await logScraper("محاولة وصول غير مصرح بها للـ Webhook", 'error');
         return res.status(403).json({ message: "Unauthorized: Invalid Secret" });
     }
 
     try {
         const { adminEmail, novelData, chapters } = req.body;
 
-        console.log(`🕷️ Scraper received data for: ${novelData?.title} from ${adminEmail}`);
+        await logScraper(`📥 استلام بيانات من السكرابر للرواية: ${novelData?.title || 'بدون عنوان'}`, 'info');
 
         if (!adminEmail || !novelData || !novelData.title) {
+            await logScraper("❌ بيانات ناقصة في الطلب", 'error');
             return res.status(400).json({ message: "Missing required data" });
         }
 
         // 2. البحث عن المستخدم (الأدمن) لربط الرواية به
         const user = await User.findOne({ email: adminEmail });
         if (!user) {
+            await logScraper(`❌ المستخدم ${adminEmail} غير موجود في النظام`, 'error');
             return res.status(404).json({ message: `User with email ${adminEmail} not found` });
         }
+
+        await logScraper(`👤 تم تحديد الناشر: ${user.name}`, 'success');
 
         // 3. البحث عن الرواية أو إنشاؤها
         let novel = await Novel.findOne({ title: novelData.title });
 
         if (!novel) {
             // إنشاء رواية جديدة
+            await logScraper(`🆕 جاري إنشاء رواية جديدة: ${novelData.title}`, 'info');
             novel = new Novel({
                 title: novelData.title,
                 cover: novelData.cover,
@@ -171,17 +222,23 @@ app.post('/api/scraper/receive', async (req, res) => {
                 views: 0
             });
             await novel.save();
-            console.log(`✅ Created new novel: ${novel.title}`);
+            await logScraper(`✅ تم إنشاء صفحة الرواية بنجاح`, 'success');
         } else {
             // تحديث البيانات إذا كانت موجودة
+            await logScraper(`🔄 الرواية موجودة بالفعل، جاري تحديث البيانات...`, 'warning');
             if (!novel.cover && novelData.cover) novel.cover = novelData.cover;
             if (!novel.description && novelData.description) novel.description = novelData.description;
-            console.log(`🔄 Updating existing novel: ${novel.title}`);
+            // ضمان تحديث المؤلف إذا كان مفقوداً
+            if (!novel.authorEmail) {
+                novel.author = user.name;
+                novel.authorEmail = user.email;
+            }
         }
 
         // 4. معالجة الفصول وإضافتها
         if (chapters && Array.isArray(chapters) && chapters.length > 0) {
             let addedCount = 0;
+            await logScraper(`📚 جاري معالجة ${chapters.length} فصل...`, 'info');
 
             for (const chap of chapters) {
                 // التأكد من عدم تكرار الفصل
@@ -214,14 +271,19 @@ app.post('/api/scraper/receive', async (req, res) => {
                 novel.chapters.sort((a, b) => a.number - b.number);
                 novel.lastChapterUpdate = new Date();
                 await novel.save();
-                console.log(`📚 Added ${addedCount} chapters.`);
+                await logScraper(`💾 تم حفظ ${addedCount} فصل جديد في قاعدة البيانات`, 'success');
+            } else {
+                await logScraper(`⚠️ جميع الفصول المرسلة موجودة مسبقاً`, 'warning');
             }
+        } else {
+            await logScraper(`⚠️ لم يتم استلام أي فصول في هذا الطلب`, 'warning');
         }
 
         res.json({ success: true, novelId: novel._id, message: "Data processed successfully" });
 
     } catch (error) {
         console.error("Scraper Receiver Error:", error);
+        await logScraper(`❌ خطأ فادح في الخادم: ${error.message}`, 'error');
         res.status(500).json({ error: error.message });
     }
 });
