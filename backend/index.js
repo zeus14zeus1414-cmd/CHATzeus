@@ -127,6 +127,106 @@ async function checkNovelStatus(novel) {
 }
 
 // =========================================================
+// 🕷️ SCRAPER WEBHOOK (بوابة استقبال البيانات من السكرابر)
+// =========================================================
+app.post('/api/scraper/receive', async (req, res) => {
+    // 1. التحقق من الرقم السري (نفس الموجود في AutoImportScreen.js)
+    const secret = req.headers['authorization'] || req.headers['x-api-secret'];
+    const VALID_SECRET = 'Zeusndndjddnejdjdjdejekk29393838msmskxcm9239484jdndjdnddjj99292938338zeuslojdnejxxmejj82283849';
+    
+    if (secret !== VALID_SECRET) {
+        return res.status(403).json({ message: "Unauthorized: Invalid Secret" });
+    }
+
+    try {
+        const { adminEmail, novelData, chapters } = req.body;
+
+        console.log(`🕷️ Scraper received data for: ${novelData?.title} from ${adminEmail}`);
+
+        if (!adminEmail || !novelData || !novelData.title) {
+            return res.status(400).json({ message: "Missing required data" });
+        }
+
+        // 2. البحث عن المستخدم (الأدمن) لربط الرواية به
+        const user = await User.findOne({ email: adminEmail });
+        if (!user) {
+            return res.status(404).json({ message: `User with email ${adminEmail} not found` });
+        }
+
+        // 3. البحث عن الرواية أو إنشاؤها
+        let novel = await Novel.findOne({ title: novelData.title });
+
+        if (!novel) {
+            // إنشاء رواية جديدة
+            novel = new Novel({
+                title: novelData.title,
+                cover: novelData.cover,
+                description: novelData.description,
+                author: user.name, // ربط الرواية باسم المستخدم
+                authorEmail: user.email,
+                category: novelData.category || 'أخرى',
+                tags: novelData.tags || [],
+                status: 'مستمرة',
+                chapters: [],
+                views: 0
+            });
+            await novel.save();
+            console.log(`✅ Created new novel: ${novel.title}`);
+        } else {
+            // تحديث البيانات إذا كانت موجودة
+            if (!novel.cover && novelData.cover) novel.cover = novelData.cover;
+            if (!novel.description && novelData.description) novel.description = novelData.description;
+            console.log(`🔄 Updating existing novel: ${novel.title}`);
+        }
+
+        // 4. معالجة الفصول وإضافتها
+        if (chapters && Array.isArray(chapters) && chapters.length > 0) {
+            let addedCount = 0;
+
+            for (const chap of chapters) {
+                // التأكد من عدم تكرار الفصل
+                const existingChap = novel.chapters.find(c => c.number === chap.number);
+
+                if (!existingChap) {
+                    // أ) حفظ المحتوى في Firestore (للقراءة)
+                    if (firestore) {
+                        await firestore.collection('novels').doc(novel._id.toString())
+                            .collection('chapters').doc(chap.number.toString()).set({
+                                title: chap.title,
+                                content: chap.content, // المحتوى النصي من السكرابر
+                                lastUpdated: new Date()
+                            });
+                    }
+
+                    // ب) إضافة بيانات الفصل الوصفية في MongoDB
+                    novel.chapters.push({
+                        number: chap.number,
+                        title: chap.title,
+                        createdAt: new Date(),
+                        views: 0
+                    });
+                    addedCount++;
+                }
+            }
+
+            if (addedCount > 0) {
+                // ترتيب الفصول وحفظ الرواية
+                novel.chapters.sort((a, b) => a.number - b.number);
+                novel.lastChapterUpdate = new Date();
+                await novel.save();
+                console.log(`📚 Added ${addedCount} chapters.`);
+            }
+        }
+
+        res.json({ success: true, novelId: novel._id, message: "Data processed successfully" });
+
+    } catch (error) {
+        console.error("Scraper Receiver Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// =========================================================
 // 🎭 NOVEL REACTIONS API
 // =========================================================
 app.post('/api/novels/:novelId/react', verifyToken, async (req, res) => {
